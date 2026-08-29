@@ -1,0 +1,22 @@
+# The adapter's client-side gates run against the REAL, RELEASED thurbox on this machine.
+# Read-only subcommands only ('version', 'config validate'). No 'session' subcommand is
+# invoked, so no window is created on the operator's live thurbox tmux server - the reason
+# tests/thurbox-test-safety.sh forbids a real-binary smoke TEST.
+
+$ thurbox-cli version --json
+  {"data_dir":"/home/magicletur/.local/share/thurbox","schema_version":40,"tmux_socket":"thurbox","version":"2.10.1"}
+
+$ fm_backend_thurbox_version_check   # gate: >= 2.9, parsed from the version SUBCOMMAND
+  rc=0 - accepted
+
+$ fm_backend_thurbox_socket          # never hardcoded: thurbox reports its own socket
+  thurbox
+
+$ tmux -L $(fm_backend_thurbox_socket) has-session   # thurbox really does run its own tmux server
+  rc=0 - a live server answers on that socket
+
+$ fm_backend_thurbox_agent_defined shell   # the one thurbox-side setup entry (docs/thurbox-backend.md Setup)
+  rc=1 - refused: no such entry (container_ensure would print the paste-ready TOML)
+
+$ tmux -L thurbox list-sessions -F "#{session_name}" | wc -l   # window count is UNCHANGED by the above
+  1

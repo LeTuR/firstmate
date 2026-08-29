@@ -1,0 +1,166 @@
+safety guard: SAFE - both thurbox-cli and tmux resolve to stubs inside the fixture
+
+
+=== 0. an operator with no thurbox agents.toml entry is refused, with paste-ready TOML ===
+error: backend=thurbox needs a thurbox agent named 'shell' that launches an INTERACTIVE SHELL (firstmate runs treehouse and launches the harness itself). Add it to thurbox's agents.toml, e.g. [[agents]] name = "shell" / command = "bash" / args = ["-i"] - see docs/thurbox-backend.md 'Setup' - or name a different entry in config/thurbox-agent.
+container_ensure rc=1
+--- commands the adapter issued ---
+  $ thurbox-cli version --json
+  $ thurbox-cli version --json
+  $ thurbox-cli config validate --json
+
+=== 1. setup: the one thurbox-side config entry docs/thurbox-backend.md asks for ===
+  [[agents]]
+  name = "codex"
+  command = "codex"
+  
+  [[agents]]
+  name = "shell"
+  command = "bash"
+  args = ["-i"]
+container_ensure rc=0 (agent 'shell' accepted)
+--- commands the adapter issued ---
+  $ thurbox-cli version --json
+  $ thurbox-cli version --json
+  $ thurbox-cli config validate --json
+
+=== 2. backend detection: a firstmate started inside a thurbox pane resolves 'thurbox' ===
+  THURBOX_SESSION=0b797791-... TMUX=/tmp/tmux-1000/thurbox,900,0
+  -> fm_backend_detect  = thurbox
+  a REAL nested tmux inside that pane (different socket) must NOT be hijacked:
+  THURBOX_SESSION=0b797791-... TMUX=/tmp/tmux-1000/default,901,0
+  -> fm_backend_detect  = tmux
+  and the away-mode supervisor resolver agrees, so its refusal is reachable:
+  -> discover_supervisor_backend = thurbox
+--- commands the adapter issued ---
+
+=== 3. spawn: fm-spawn.sh creates the task's thurbox session ===
+  create_task fm-demo1 /w  ->  uuid=0b797791-3590-41c5-9918-21e38d1a54d4 pane=%23
+  task endpoint recorded in meta: 0b797791-3590-41c5-9918-21e38d1a54d4:%23
+--- commands the adapter issued ---
+  $ thurbox-cli session list --json
+  $ thurbox-cli session create --name fm-firstmate-ff7eef69-demo1 --repo-path /w --agent shell --json
+  $ thurbox-cli session get 0b797791-3590-41c5-9918-21e38d1a54d4 --json
+
+=== 4. identity model: the UUID is durable, the pane id is only a cache ===
+  thurbox-cli session restart moved the window %23 -> %24 (verified live on 2.9.2)
+  target_ready re-resolved the stale endpoint 0b797791-3590-41c5-9918-21e38d1a54d4:%23 -> pane %24
+--- commands the adapter issued ---
+  $ thurbox-cli session get 0b797791-3590-41c5-9918-21e38d1a54d4 --json
+  $ tmux -L thurbox display-message -p -t %24 #{pane_id}
+
+=== 5. steer: unsubmitted literal input, then a named key - never 'session send' ===
+  send_literal rc=0
+  send_key enter rc=0
+--- commands the adapter issued ---
+  $ thurbox-cli session get 0b797791-3590-41c5-9918-21e38d1a54d4 --json
+  $ thurbox-cli session get 0b797791-3590-41c5-9918-21e38d1a54d4 --json
+  $ tmux -L thurbox display-message -p -t %24 #{pane_id}
+  $ tmux -L thurbox send-keys -t %24 -l -- ship it, captain
+  $ tmux -L thurbox display-message -p -t %24 #{pane_id}
+  $ tmux -L thurbox send-keys -t %24 Enter
+
+=== 6. read the pane back (what the watcher and 'fm brief' show the operator) ===
+  capture (plain, via thurbox-cli session capture):
+    | captain@fm-demo1:/w$ claude
+    | > ship it, captain
+    |   Working... (esc to interrupt)--- commands the adapter issued ---
+  $ thurbox-cli session get 0b797791-3590-41c5-9918-21e38d1a54d4 --json
+  $ thurbox-cli session capture 0b797791-3590-41c5-9918-21e38d1a54d4 --lines 5 --json
+  $ tmux -L thurbox display-message -p -t %24 #{pane_id}
+
+=== 7. composer fidelity: thurbox is the first non-tmux backend at tmux's caps ===
+  composer_caps ->
+    styled=1
+    cursor=1
+    identity=0
+    rows=0
+  rendered pane:
+    | 
+    |   → 
+    | 
+    |   Claude Sonnet 4.5                       Run Everything
+    |   /w · main
+    | 
+  -> composer_state = empty   (safe to send)
+  rendered pane after an Enter that did not land:
+    | 
+    |   → ship it, captain
+    | 
+    |   Claude Sonnet 4.5                       Run Everything
+    |   /w · main
+    | 
+  -> composer_state = pending (text still unsubmitted)
+--- commands the adapter issued ---
+  $ thurbox-cli session get 0b797791-3590-41c5-9918-21e38d1a54d4 --json
+  $ thurbox-cli session get 0b797791-3590-41c5-9918-21e38d1a54d4 --json
+  $ thurbox-cli session get 0b797791-3590-41c5-9918-21e38d1a54d4 --json
+  $ thurbox-cli session get 0b797791-3590-41c5-9918-21e38d1a54d4 --json
+  $ tmux -L thurbox display-message -p -t %24 #{pane_id}
+  $ tmux -L thurbox display-message -p -t %24 #{cursor_y}
+  $ tmux -L thurbox display-message -p -t %24 #{pane_id}
+  $ tmux -L thurbox capture-pane -e -p -t %24 -S 0 -E -
+  $ tmux -L thurbox display-message -p -t %24 #{pane_id}
+  $ tmux -L thurbox display-message -p -t %24 #{cursor_y}
+  $ tmux -L thurbox display-message -p -t %24 #{pane_id}
+  $ tmux -L thurbox capture-pane -e -p -t %24 -S 0 -E -
+
+=== 7b. the Cursor Agent hazard: cursor parked past the footer, reclassified ===
+  foreground process is cursor-agent, cursor row 6 (past the footer)
+  -> composer_state = empty   (ghost placeholder, not typed text)
+  same screen, foreground process is a plain shell (Cursor exited)
+  -> composer_state = unknown (never 'empty': typing here would run a shell command)
+--- commands the adapter issued ---
+  $ thurbox-cli session get 0b797791-3590-41c5-9918-21e38d1a54d4 --json
+  $ thurbox-cli session get 0b797791-3590-41c5-9918-21e38d1a54d4 --json
+  $ thurbox-cli session get 0b797791-3590-41c5-9918-21e38d1a54d4 --json
+  $ thurbox-cli session get 0b797791-3590-41c5-9918-21e38d1a54d4 --json
+  $ thurbox-cli session get 0b797791-3590-41c5-9918-21e38d1a54d4 --json
+  $ thurbox-cli session get 0b797791-3590-41c5-9918-21e38d1a54d4 --json
+  $ tmux -L thurbox display-message -p -t %24 #{pane_id}
+  $ tmux -L thurbox display-message -p -t %24 #{cursor_y}
+  $ tmux -L thurbox display-message -p -t %24 #{pane_id}
+  $ tmux -L thurbox capture-pane -e -p -t %24 -S 0 -E -
+  $ tmux -L thurbox display-message -p -t %24 #{pane_id}
+  $ tmux -L thurbox display-message -p -t %24 #{pane_tty}
+  $ tmux -L thurbox display-message -p -t %24 #{pane_id}
+  $ tmux -L thurbox display-message -p -t %24 #{cursor_y}
+  $ tmux -L thurbox display-message -p -t %24 #{pane_id}
+  $ tmux -L thurbox capture-pane -e -p -t %24 -S 0 -E -
+  $ tmux -L thurbox display-message -p -t %24 #{pane_id}
+  $ tmux -L thurbox display-message -p -t %24 #{pane_tty}
+
+=== 8. busy classification from thurbox's own hook_state (herdr's exact vocabulary) ===
+  hook_state=null     -> busy_state unknown
+  hook_state=working  -> busy_state busy
+  hook_state=blocked  -> busy_state idle
+  hook_state=done     -> busy_state idle
+  hook_state=idle     -> busy_state idle
+--- commands the adapter issued ---
+  $ thurbox-cli session get 0b797791-3590-41c5-9918-21e38d1a54d4 --json
+  $ thurbox-cli session get 0b797791-3590-41c5-9918-21e38d1a54d4 --json
+  $ thurbox-cli session get 0b797791-3590-41c5-9918-21e38d1a54d4 --json
+  $ thurbox-cli session get 0b797791-3590-41c5-9918-21e38d1a54d4 --json
+  $ thurbox-cli session get 0b797791-3590-41c5-9918-21e38d1a54d4 --json
+  $ tmux -L thurbox display-message -p -t %24 #{pane_id}
+  $ tmux -L thurbox display-message -p -t %24 #{pane_id}
+  $ tmux -L thurbox display-message -p -t %24 #{pane_id}
+  $ tmux -L thurbox display-message -p -t %24 #{pane_id}
+  $ tmux -L thurbox display-message -p -t %24 #{pane_id}
+
+=== 9. the fleet view: list_live is scoped to this firstmate home ===
+  sessions in thurbox's database:
+    0b797791-3590-41c5-9918-21e38d1a54d4	fm-firstmate-ff7eef69-demo1	%24	local-tmux	-
+    22222222-2222-2222-2222-222222222222	someone-elses-session	%25	local-tmux	-
+  fm_backend_thurbox_list_live ->
+    0b797791-3590-41c5-9918-21e38d1a54d4:%24	fm-demo1
+--- commands the adapter issued ---
+  $ thurbox-cli session list --json
+
+=== 10. teardown: fm-teardown.sh reclaims the window headlessly (--force) ===
+  kill rc=0
+  sessions remaining:
+    22222222-2222-2222-2222-222222222222	someone-elses-session	%25	local-tmux	-
+--- commands the adapter issued ---
+  $ thurbox-cli session get 0b797791-3590-41c5-9918-21e38d1a54d4 --json
+  $ thurbox-cli session delete 0b797791-3590-41c5-9918-21e38d1a54d4 --force --json

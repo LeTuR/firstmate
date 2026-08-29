@@ -1,0 +1,36 @@
+# firstmate bootstrap with backend=thurbox (bin/fm-bootstrap.sh, the operator's first-touch command)
+
+$ echo thurbox > $FM_HOME/config/backend && bin/fm-bootstrap.sh
+  MISSING: treehouse (install: curl -fsSL https://kunchenguid.github.io/treehouse/install.sh | sh)
+  MISSING: gh-axi (install: npm install -g gh-axi && gh-axi setup hooks)
+  MISSING: chrome-devtools-axi (install: npm install -g chrome-devtools-axi && chrome-devtools-axi setup hooks)
+  MISSING: lavish-axi (install: npm install -g lavish-axi && lavish-axi setup hooks)
+  MISSING: tasks-axi (install: npm install -g tasks-axi)
+  MISSING: quota-axi (install: npm install -g quota-axi)
+
+$ echo bogus > $FM_HOME/config/backend && bin/fm-bootstrap.sh
+  BACKEND_INVALID: bogus (known: tmux herdr zellij orca cmux thurbox)
+  MISSING: gh-axi (install: npm install -g gh-axi && gh-axi setup hooks)
+  MISSING: chrome-devtools-axi (install: npm install -g chrome-devtools-axi && chrome-devtools-axi setup hooks)
+  MISSING: lavish-axi (install: npm install -g lavish-axi && lavish-axi setup hooks)
+  MISSING: tasks-axi (install: npm install -g tasks-axi)
+  MISSING: quota-axi (install: npm install -g quota-axi)
+
+# the same home on a machine with no thurbox installed (thurbox-cli removed from PATH)
+$ PATH=<without thurbox-cli> bin/fm-bootstrap.sh
+  MISSING_MANUAL: thurbox-cli (instructions: https://github.com/Thurbeen/thurbox (ships thurbox and thurbox-cli; self-updates with 'thurbox-cli update'))
+  MISSING: treehouse (install: curl -fsSL https://kunchenguid.github.io/treehouse/install.sh | sh)
+  MISSING: no-mistakes (install: curl -fsSL https://raw.githubusercontent.com/kunchenguid/no-mistakes/main/docs/install.sh | sh)
+  MISSING: gh-axi (install: npm install -g gh-axi && gh-axi setup hooks)
+  MISSING: chrome-devtools-axi (install: npm install -g chrome-devtools-axi && chrome-devtools-axi setup hooks)
+  MISSING: lavish-axi (install: npm install -g lavish-axi && lavish-axi setup hooks)
+  MISSING: tasks-axi (install: npm install -g tasks-axi)
+  MISSING: quota-axi (install: npm install -g quota-axi)
+
+# the toolchain firstmate requires for each backend (bin/fm-backend.sh fm_backend_required_tools)
+  tmux     tmux treehouse
+  herdr    herdr jq treehouse
+  zellij   zellij jq treehouse
+  orca     orca
+  cmux     cmux jq treehouse
+  thurbox  thurbox-cli tmux jq treehouse

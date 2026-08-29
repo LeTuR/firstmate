@@ -1,0 +1,11 @@
+# review-round fix, bin/backends/thurbox.sh:211 fm_backend_thurbox_tmux.
+# Before: sock=$(fm_backend_thurbox_socket) - a command substitution, so the memo's
+# cache assignment died in the subshell and every pane primitive re-ran
+# 'thurbox-cli version --json' + jq. After: the cache survives the calling shell.
+# The verdict is identical either way, which is the point: this is cost, not behaviour.
+# Two version calls remain because composer_state reads its sub-parts through its own
+# command substitutions, so the cache is per-subshell, not global.
+
+one cold fm_backend_thurbox_composer_state read (the watcher's per-poll, per-Enter hot path):
+  pre-fix wrapper    verdict=pending  thurbox-cli processes spawned: 6   (of which `version --json`: 4)   tmux pane primitives: 4
+  current wrapper    verdict=pending  thurbox-cli processes spawned: 4   (of which `version --json`: 2)   tmux pane primitives: 4
