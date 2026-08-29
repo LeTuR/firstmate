@@ -1,0 +1,19 @@
+Non-vacuity check for the new operator-level case
+tests/fm-backend-thurbox.test.sh::test_peek_send_and_crew_state_route_through_thurbox_meta
+
+Mutation applied to bin/fm-backend.sh (dispatcher routing for the steer path):
+    -    thurbox) fm_backend_thurbox_send_text_submit "$@" ;;
+
+Suite result with the mutation in place:
+
+    ok - forced secondmate teardown reclaims a thurbox child session under the child home tag
+    not ok - fm-send did not ring the doorbell through session send --no-enter
+    rc=1
+
+The new case is the only one in the suite that fails on that mutation: every
+other thurbox case calls the adapter functions directly, so none of them
+notices when the shared dispatcher stops routing a backend=thurbox task into
+this adapter. The mutation was reverted immediately after the run
+(`git diff --stat bin/fm-backend.sh` -> empty).
+
+Suite result with the mutation reverted: rc=0, 57 cases pass.

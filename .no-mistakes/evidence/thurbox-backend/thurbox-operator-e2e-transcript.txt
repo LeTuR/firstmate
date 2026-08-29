@@ -1,0 +1,147 @@
+thurbox operator end-to-end walkthrough
+firstmate root : /home/magicletur/.no-mistakes/worktrees/1a5098628b08/01M17KPGTXF8EA3NFC61181WH5
+task           : steerdemo (backend=thurbox)
+thurbox session: 7f3a91c4-2b8e-4d6f-9a10-5c7e2f4b8d31  name=fm-firstmate-4a893ad6-steerdemo  pane=%23
+thurbox-cli    : stub speaking 2.10.1; tmux on PATH is a tripwire that fails on any call
+
+=== 1. state/steerdemo.meta - what a thurbox spawn records
+window=7f3a91c4-2b8e-4d6f-9a10-5c7e2f4b8d31:%23
+endpoint_task_id=steerdemo
+backend=thurbox
+thurbox_session_id=7f3a91c4-2b8e-4d6f-9a10-5c7e2f4b8d31
+thurbox_pane_id=%23
+worktree=/tmp/thurbox-e2e.JCji6Q/worktree
+project=/tmp/thurbox-e2e.JCji6Q/worktree
+harness=claude
+kind=scout
+
+=== 2. bin/fm-peek.sh - read the agent's pane through thurbox-cli
+
+$ bin/fm-peek.sh fm-steerdemo 12
+  Welcome to Claude Code
+
+> tell me about this repo
+
+  I looked at the tree and it is a bash fleet manager.
+
+╭──────────────────────────────────────────────────────────────╮
+│ >                                                            │
+╰──────────────────────────────────────────────────────────────╯(exit 0)
+
+=== 3. bin/fm-send.sh - steer the task (durable inbox record + terminal doorbell)
+
+$ bin/fm-send.sh steerdemo 'switch to the retry-budget branch and rerun the suite'
+(exit 0)
+
+=== 4. the durable steering record the send created
+--- steerdemo.inbox/001.msg ---
+schema=fm-task-inbox.v1
+at=2026-08-29T21:01:45Z
+--
+switch to the retry-budget branch and rerun the suite
+=== 5. the pane after the steer - doorbell typed and submitted, composer empty again
+  Welcome to Claude Code
+
+> tell me about this repo
+
+  I looked at the tree and it is a bash fleet manager.
+
+╭──────────────────────────────────────────────────────────────╮
+│ >                                                            │
+╰──────────────────────────────────────────────────────────────╯
+=== 6. bin/fm-crew-state.sh - task state read through the thurbox backend
+
+$ bin/fm-crew-state.sh steerdemo
+state: unknown · source: pane · harness state unavailable (unknown missing)
+
+=== 7. thurbox's native hook_state drives busy - agent signals working
+
+$ fm_backend_dispatch busy-state (backend=thurbox, hook_state=working)
+hook_state=working -> busy_state=busy
+hook_state=null    -> busy_state=unknown (never idle before the first signal)
+
+=== 7b. a Cursor Agent pane - cursor parked outside the composer
+the pane an operator would see:
+  | 
+  |   → rerun the failing case
+  | 
+  |   Cursor Grok 4.5 High                    Run Everything
+  |   /w · main
+  | 
+no foreground process reported                             -> composer verdict: unknown
+foreground_process=node (name only, as a bundled CLI reports) -> composer verdict: unknown
+foreground_command carries Cursor's argv                   -> composer verdict: pending
+
+Reading: with only the cursor row to go on the verdict is unknown (an unverifiable
+steer); the pane is reclassified cursorlessly - and the pending text in the composer
+found - only once the argv identifies Cursor. A bare command NAME is not enough,
+which is what the head commit fixed.
+
+=== 8. bin/fm-teardown.sh --force - retire the task, reclaiming the thurbox session
+
+$ bin/fm-teardown.sh steerdemo --force
+teardown steerdemo complete (window 7f3a91c4-2b8e-4d6f-9a10-5c7e2f4b8d31:%23, worktree /tmp/thurbox-e2e.JCji6Q/worktree)
+Backlog: steerdemo just finished. Update data/backlog.md - move steerdemo to Done, keep Done to the 10 most recent, then re-scan Queued and dispatch only work whose blockers are gone and date is due.
+
+session rows remaining after teardown: 0
+
+=== 9. every thurbox-cli call this walkthrough made
+thurbox-cli session get 7f3a91c4-2b8e-4d6f-9a10-5c7e2f4b8d31 --json
+thurbox-cli session capture 7f3a91c4-2b8e-4d6f-9a10-5c7e2f4b8d31 --lines 1 --json
+thurbox-cli session capture 7f3a91c4-2b8e-4d6f-9a10-5c7e2f4b8d31 --lines 12 --json
+thurbox-cli session get 7f3a91c4-2b8e-4d6f-9a10-5c7e2f4b8d31 --json
+thurbox-cli session capture 7f3a91c4-2b8e-4d6f-9a10-5c7e2f4b8d31 --lines 1 --json
+thurbox-cli session capture 7f3a91c4-2b8e-4d6f-9a10-5c7e2f4b8d31 --lines 0 --json --ansi
+thurbox-cli session get 7f3a91c4-2b8e-4d6f-9a10-5c7e2f4b8d31 --json
+thurbox-cli session capture 7f3a91c4-2b8e-4d6f-9a10-5c7e2f4b8d31 --lines 1 --json
+thurbox-cli session send 7f3a91c4-2b8e-4d6f-9a10-5c7e2f4b8d31 --no-enter -- Firstmate instruction waiting: list /tmp/thurbox-e2e.JCji6Q/state/steerdemo.inbox/*.msg and, in numeric order, read and act on each, then mv each handled file to /tmp/thurbox-e2e.JCji6Q/state/steerdemo.inbox/handled/.
+thurbox-cli session get 7f3a91c4-2b8e-4d6f-9a10-5c7e2f4b8d31 --json
+thurbox-cli session capture 7f3a91c4-2b8e-4d6f-9a10-5c7e2f4b8d31 --lines 1 --json
+thurbox-cli session key 7f3a91c4-2b8e-4d6f-9a10-5c7e2f4b8d31 enter
+thurbox-cli session get 7f3a91c4-2b8e-4d6f-9a10-5c7e2f4b8d31 --json
+thurbox-cli session capture 7f3a91c4-2b8e-4d6f-9a10-5c7e2f4b8d31 --lines 1 --json
+thurbox-cli session capture 7f3a91c4-2b8e-4d6f-9a10-5c7e2f4b8d31 --lines 0 --json --ansi
+thurbox-cli session get 7f3a91c4-2b8e-4d6f-9a10-5c7e2f4b8d31 --json
+thurbox-cli session capture 7f3a91c4-2b8e-4d6f-9a10-5c7e2f4b8d31 --lines 1 --json
+thurbox-cli session capture 7f3a91c4-2b8e-4d6f-9a10-5c7e2f4b8d31 --lines 12 --json
+thurbox-cli session get 7f3a91c4-2b8e-4d6f-9a10-5c7e2f4b8d31 --json
+thurbox-cli session capture 7f3a91c4-2b8e-4d6f-9a10-5c7e2f4b8d31 --lines 1 --json
+thurbox-cli session capture 7f3a91c4-2b8e-4d6f-9a10-5c7e2f4b8d31 --lines 1 --json
+thurbox-cli session get 7f3a91c4-2b8e-4d6f-9a10-5c7e2f4b8d31 --json
+thurbox-cli session capture 7f3a91c4-2b8e-4d6f-9a10-5c7e2f4b8d31 --lines 1 --json
+thurbox-cli session get 7f3a91c4-2b8e-4d6f-9a10-5c7e2f4b8d31 --json
+thurbox-cli session capture 7f3a91c4-2b8e-4d6f-9a10-5c7e2f4b8d31 --lines 1 --json
+thurbox-cli session get 7f3a91c4-2b8e-4d6f-9a10-5c7e2f4b8d31 --json
+thurbox-cli session capture 7f3a91c4-2b8e-4d6f-9a10-5c7e2f4b8d31 --lines 1 --json
+thurbox-cli session get 7f3a91c4-2b8e-4d6f-9a10-5c7e2f4b8d31 --json
+thurbox-cli session capture 7f3a91c4-2b8e-4d6f-9a10-5c7e2f4b8d31 --lines 1 --json
+thurbox-cli session capture 7f3a91c4-2b8e-4d6f-9a10-5c7e2f4b8d31 --lines 0 --json --ansi
+thurbox-cli session get 7f3a91c4-2b8e-4d6f-9a10-5c7e2f4b8d31 --json
+thurbox-cli session capture 7f3a91c4-2b8e-4d6f-9a10-5c7e2f4b8d31 --lines 1 --json
+thurbox-cli session capture 7f3a91c4-2b8e-4d6f-9a10-5c7e2f4b8d31 --lines 0 --json --ansi
+thurbox-cli session get 7f3a91c4-2b8e-4d6f-9a10-5c7e2f4b8d31 --json
+thurbox-cli session capture 7f3a91c4-2b8e-4d6f-9a10-5c7e2f4b8d31 --lines 1 --json
+thurbox-cli session capture 7f3a91c4-2b8e-4d6f-9a10-5c7e2f4b8d31 --lines 0 --json --ansi
+thurbox-cli session get 7f3a91c4-2b8e-4d6f-9a10-5c7e2f4b8d31 --json
+thurbox-cli session delete 7f3a91c4-2b8e-4d6f-9a10-5c7e2f4b8d31 --force --json
+
+=== 10. tmux invocations (the 2.10 rework must make ZERO)
+(empty - the adapter drove thurbox-cli only)
+
+=== 11. operator preflight gates, as bin/fm-spawn.sh's thurbox arm runs them
+
+$ container_ensure with thurbox 2.9.2 installed (below the 2.10 floor)
+error: thurbox 2.9.2 is older than the verified minimum 2.10; update thurbox before using backend=thurbox
+(exit 1)
+
+$ container_ensure on 2.10.1 with no interactive-shell agent in agents.toml
+error: backend=thurbox needs a thurbox agent named 'shell' that launches an INTERACTIVE SHELL (firstmate runs treehouse and launches the harness itself). Add it to thurbox's agents.toml, e.g. [[agents]] name = "shell" / command = "bash" / args = ["-i"] - see docs/thurbox-backend.md 'Setup' - or name a different entry in config/thurbox-agent.
+(exit 1)
+
+$ container_ensure once the documented [[agents]] entry exists
+gate passed (exit 0)
+
+$ the toolchain firstmate demands for backend=thurbox
+required tools: thurbox-cli jq treehouse
+
+WALKTHROUGH COMPLETE
