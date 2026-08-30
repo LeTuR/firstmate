@@ -1,0 +1,54 @@
+firstmate thurbox adapter - LIVE read-only pass - fault injection: the tmux transport thurbox-cli itself needs is broken
+host thurbox-cli: /home/magicletur/.local/bin/thurbox-cli
+  data_dir: /home/magicletur/.local/share/thurbox
+  schema_version: 40
+  tmux_socket: thurbox
+  version: 2.10.1
+
+== backend registry
+known backends           : tmux herdr zellij orca cmux thurbox
+spawn-capable backends   : tmux herdr zellij orca cmux thurbox
+required tools (thurbox) : thurbox-cli jq treehouse
+fm_backend_validate      : thurbox accepted
+fm_backend_validate_spawn: thurbox accepted
+
+== version gate against the real binary (floor 2.10)
+version_check            : PASS (installed 2.10.1, floor 2.10)
+thurbox tmux socket      : thurbox (read from thurbox, not hardcoded)
+
+== runtime auto-detection of a thurbox-hosted captain
+fm_backend_detect        : thurbox
+
+== identity model: the UUID is durable, the pane id is only a cache
+session name             : Create CLAUDE.md
+live row backend_id      : %3
+target handed to firstmate: f2a60763-9722-43cc-9ef9-b92d9ab76c31:%STALE
+target_ready             : REFUSED (pane unreadable)
+
+== fm_backend_capture - the read behind fm-peek and the watcher pane tail
+exit status              : 1
+rows returned            : 1
+--- live pane content, non-empty rows, exactly as fm-peek prints it ---
+
+== composer / busy / cwd verdicts on that same live pane
+composer caps            : styled=1 cursor=1 identity=0 rows=0 
+cursor_row (live)        : 
+foreground process       : <none>
+composer_state           : unknown
+busy_state               : unknown (thurbox hook_state=idle)
+current_path             : 
+fm_backend_target_exists : no
+
+== refusals proved against real rows
+target owned by another task : refused
+unknown session uuid        : refused
+
+== list_live scopes to this firstmate home
+this home tag            : firstmate-69ec2d4b
+sessions in the database : 6
+adopted by this home     : <none - no live session carries this home tag>
+
+== who actually called tmux
+tmux invocations logged  : 38 (all of them thurbox-cli reaching its own
+                           panes - firstmate never runs tmux for thurbox)
+first logged invocation  : tmux -L thurbox display-message -p -t %3 #{window_name}

@@ -1,0 +1,60 @@
+firstmate thurbox adapter - LIVE read-only pass
+host thurbox-cli: /home/magicletur/.local/bin/thurbox-cli
+  data_dir: /home/magicletur/.local/share/thurbox
+  schema_version: 40
+  tmux_socket: thurbox
+  version: 2.10.1
+
+== backend registry
+known backends           : tmux herdr zellij orca cmux thurbox
+spawn-capable backends   : tmux herdr zellij orca cmux thurbox
+required tools (thurbox) : thurbox-cli jq treehouse
+fm_backend_validate      : thurbox accepted
+fm_backend_validate_spawn: thurbox accepted
+
+== version gate against the real binary (floor 2.10)
+version_check            : PASS (installed 2.10.1, floor 2.10)
+thurbox tmux socket      : thurbox (read from thurbox, not hardcoded)
+
+== runtime auto-detection of a thurbox-hosted captain
+fm_backend_detect        : thurbox
+
+== identity model: the UUID is durable, the pane id is only a cache
+session name             : Create CLAUDE.md
+live row backend_id      : %3
+target handed to firstmate: f2a60763-9722-43cc-9ef9-b92d9ab76c31:%STALE
+target_ready             : re-resolved the stale pane id -> %3
+
+== fm_backend_capture - the read behind fm-peek and the watcher pane tail
+exit status              : 0
+rows returned            : 19
+--- live pane content, non-empty rows, exactly as fm-peek prints it ---
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Accessing workspace:
+ /home/magicletur
+ Quick safety check: Is this a project you created or one you trust? (Like your own code, a well-known open source
+ project, or work from your team). If not, take a moment to review what's in this folder first.
+ Claude Code'll be able to read, edit, and execute files here.
+ Security guide
+ ❯ No, exit
+   Yes, I trust this folder
+ Enter to confirm · Esc to cancel
+
+== composer / busy / cwd verdicts on that same live pane
+composer caps            : styled=1 cursor=1 identity=0 rows=0 
+cursor_row (live)        : 13
+foreground process       : claude
+composer_state           : pending
+busy_state               : idle (thurbox hook_state=idle)
+current_path             : /home/magicletur
+fm_backend_target_exists : yes
+
+== refusals proved against real rows
+target owned by another task : refused
+unknown session uuid        : refused
+
+== list_live scopes to this firstmate home
+this home tag            : firstmate-69ec2d4b
+sessions in the database : 6
+adopted by this home     : <none - no live session carries this home tag>

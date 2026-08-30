@@ -1,0 +1,61 @@
+=== fm-spawn --backend thurbox : operator output ===
+warning: /tmp/fm-backend-thurbox-tests.IPn7ow/spawn-data/spawne2e1/brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+spawned spawne2e1 harness=claude kind=ship mode=no-mistakes yolo=off window=aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee:%31 worktree=/tmp/fm-backend-thurbox-tests.IPn7ow/spawn-wt
+
+=== state/spawne2e1.meta as fm-spawn recorded it ===
+window=aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee:%31
+endpoint_task_id=spawne2e1
+worktree=/tmp/fm-backend-thurbox-tests.IPn7ow/spawn-wt
+project=/tmp/fm-backend-thurbox-tests.IPn7ow/spawn-project
+harness=claude
+kind=ship
+mode=no-mistakes
+yolo=off
+tasktmp=/tmp/fm-spawne2e1
+model=default
+effort=default
+busy_gen=g1788079644.247770.8491
+spawn_gen=s1788079644.247479.11180
+backend=thurbox
+thurbox_session_id=aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee
+thurbox_pane_id=%31
+
+=== every thurbox-cli invocation the spawn made (\x1f -> space) ===
+thurbox-cli version --json
+thurbox-cli version --json
+thurbox-cli config validate --json
+thurbox-cli session list --json
+thurbox-cli session create --name fm-firstmate-0bf58dbe-spawne2e1 --repo-path /tmp/fm-backend-thurbox-tests.IPn7ow/spawn-project --agent shell --json
+thurbox-cli session get aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --json
+thurbox-cli session get aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --json
+thurbox-cli session capture aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --lines 1 --json
+thurbox-cli session send aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --no-enter -- treehouse get
+thurbox-cli session get aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --json
+thurbox-cli session capture aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --lines 1 --json
+thurbox-cli session key aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee enter
+thurbox-cli session get aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --json
+thurbox-cli session capture aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --lines 1 --json
+thurbox-cli session capture aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --lines 0 --json
+thurbox-cli session get aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --json
+thurbox-cli session capture aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --lines 1 --json
+thurbox-cli session capture aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --lines 0 --json
+thurbox-cli session get aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --json
+thurbox-cli session capture aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --lines 1 --json
+thurbox-cli session capture aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --lines 1 --json
+thurbox-cli session get aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --json
+thurbox-cli session capture aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --lines 1 --json
+thurbox-cli session get aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --json
+thurbox-cli session capture aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --lines 1 --json
+thurbox-cli session send aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --no-enter -- export GOTMPDIR=/tmp/fm-spawne2e1/gotmp
+thurbox-cli session get aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --json
+thurbox-cli session capture aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --lines 1 --json
+thurbox-cli session key aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee enter
+thurbox-cli session get aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --json
+thurbox-cli session capture aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --lines 1 --json
+thurbox-cli session send aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --no-enter -- env -u CURSOR_AGENT -u CURSOR_INVOKED_AS CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false claude --dangerously-skip-permissions "$('/home/magicletur/.no-mistakes/worktrees/1a5098628b08/01M18TCBC092002A0STW01CRPD/bin/fm-operational-input.sh' encode launch-brief < '/tmp/fm-backend-thurbox-tests.IPn7ow/spawn-data/spawne2e1/brief.md')"
+thurbox-cli session get aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --json
+thurbox-cli session capture aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --lines 1 --json
+thurbox-cli session key aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee enter
+
+=== tmux invocations during the spawn ===
+(none - the adapter ran no tmux command)
