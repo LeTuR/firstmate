@@ -899,6 +899,13 @@ fm_backend_busy_state() {  # <backend> <target>
 # remains the source of truth, and nothing published here may be promoted above
 # it.
 #
+# The window where those two properties do NOT cover each other is a task whose
+# record has been deliberately removed while its endpoint stays alive
+# (`fm-control exit`): no record left to outrank the read, and a last published
+# `working` that the no-record path would go on trusting forever. That is why
+# bin/fm-busy-event.sh publishes an at-rest state on a successful retirement
+# too - a stopped worker reads as at rest rather than as confidently busy.
+#
 # Best-effort by contract: it always returns 0, because its only caller is
 # bin/fm-busy-event.sh's post-mutation side effect, which must never fail a
 # busy-state write or break a harness's own turn lifecycle.

@@ -37,19 +37,35 @@
 #       writer lock used by arm and apply. An exact gen prevents teardown for
 #       an old task from retiring a newly armed incarnation. A missing sidecar
 #       is already retired, so any orphan record is removed idempotently.
+#       A retirement that actually removed a live incarnation publishes an
+#       at-rest state too; see the side-effect note below for why that one
+#       cannot be read from the record.
 #
 # Exit codes: 0 applied; 1 refused (stale gen, unarmed task, lock timeout,
 # invalid input); 2 usage. Adapter hook command lines append `|| true` so a
 # refusal never breaks the harness's own lifecycle.
 #
-# After a SUCCESSFUL arm or apply - never before one, never for a refused
-# event, and never for a retirement - the state just written is published to
-# the task's runtime backend when that backend renders agent state in its own
-# UI (fm_backend_publish_busy_state in bin/fm-backend.sh). That is a bounded,
-# best-effort side effect of the mutation: it can never fail the write above,
-# and the value it sends is re-read from the record rather than taken from this
-# invocation's arguments, so a writer the record has already moved past reports
-# the superseding state instead of inverting the UI with its own stale one.
+# After a SUCCESSFUL mutation - never before one, and never for a refused event
+# - the state just written is published to the task's runtime backend when that
+# backend renders agent state in its own UI (fm_backend_publish_busy_state in
+# bin/fm-backend.sh). That is a bounded, best-effort side effect of the
+# mutation: it can never fail the write above, and for arm and apply the value
+# it sends is re-read from the record rather than taken from this invocation's
+# arguments, so a writer the record has already moved past reports the
+# superseding state instead of inverting the UI with its own stale one.
+#
+# A successful RETIREMENT publishes an at-rest `idle`, and it is the one
+# publication that cannot come from the record, because retirement has just
+# removed the record a re-read would consult - so it names its state literally
+# instead of weakening the shared record-derived path. It exists because a
+# retirement that deliberately KEEPS the endpoint alive (`fm-control exit`, and
+# the aborted-relaunch cleanup in bin/fm-spawn.sh) otherwise left the last
+# published state at `working` forever: bin/fm-busy-lib.sh's no-record path
+# trusts a native busy verdict when there is no record, so firstmate went on
+# confidently classifying a stopped worker as busy where it used to answer
+# unknown. A confident wrong answer is worse than no answer, because
+# supervision and recovery both read it. Teardown kills the session anyway, so
+# on that path the call simply fails harmlessly like any other best-effort one.
 #
 # The published value is not invisible to firstmate, and describing this as
 # one-way traffic would be wrong. It lands in the very field an adapter's
@@ -191,13 +207,52 @@ lock_acquire() {
 }
 lock_release() { rmdir "$LOCK" 2>/dev/null || true; }
 
+# publish_budget: the hard bound around the backend CLI call, sanitized.
+# fm-timeout-lib.sh's contract is that a non-positive bound is NOT a bound:
+# `timeout 0` and the perl fallback's `alarm 0` both DISABLE the deadline, and
+# `alarm` takes whole seconds, so a fractional 0.5 truncates to alarm(0) and
+# disables it the same way on a host with neither `timeout` nor `gtimeout`.
+# Either one would turn this hard bound into no bound at all on a path a
+# harness's turn hook waits for, so only a positive WHOLE number is trusted -
+# the same guard bin/fm-inactive-reconcile.sh and bin/fm-tool-update-check.sh
+# put on their own budgets. A bad budget degrades to the default bound, never
+# to an unbounded call.
+publish_budget() {
+  local budget=${FM_BUSY_PUBLISH_BUDGET_SECS:-5}
+  case "$budget" in ''|*[!0-9]*|0*) budget=5 ;; esac
+  printf '%s' "$budget"
+}
+
 # Serialize publications for this task. Its wait is deliberately much shorter
 # than the writer lock's, because this runs on a harness's turn hook after the
 # record is already safe: waiting longer would buy a cosmetic UI signal at the
 # cost of hook latency, so a contended lock gives up and publishes nothing.
 # Giving up is safe - the holder reads the same record this would have read.
-publish_lock_acquire() {
-  local tries=0 now mtime age
+#
+# Two invariants keep "serialized" true rather than merely intended, and they
+# are separate defences because either alone still admits two live publishers.
+# First, the stale bound is derived from the budget the holder is allowed to
+# spend rather than from FM_BUSY_LOCK_STALE_SECS, which defaults EQUAL to it:
+# a threshold that is not strictly greater than the bounded call it must
+# outlive declares a still-running holder abandoned. Second, the lock carries
+# an owner token, so a holder whose lock WAS broken - by a genuinely abandoned
+# predecessor's threshold, or by an operator - releases nothing instead of
+# removing the next holder's lock and admitting a third publisher behind it. A
+# truly abandoned lock is still recoverable, which is the point of the bound.
+PUBLISH_LOCK_TOKEN=
+
+publish_lock_stamp() {
+  PUBLISH_LOCK_TOKEN="p$$.$RANDOM.$(date +%s)"
+  printf '%s\n' "$PUBLISH_LOCK_TOKEN" > "$PUBLISH_LOCK/owner" 2>/dev/null && return 0
+  # An unmarkable lock could never be released by its owner, so give it back
+  # now rather than leaving a directory nobody may remove until it goes stale.
+  PUBLISH_LOCK_TOKEN=
+  rmdir "$PUBLISH_LOCK" 2>/dev/null || true
+  return 1
+}
+
+publish_lock_acquire() {  # <stale-secs>
+  local stale=$1 tries=0 now mtime age
   while ! mkdir "$PUBLISH_LOCK" 2>/dev/null; do
     tries=$((tries + 1))
     if [ "$tries" -ge 20 ]; then
@@ -205,17 +260,27 @@ publish_lock_acquire() {
       mtime=$(lock_mtime "$PUBLISH_LOCK" || true)
       case "$mtime" in ''|*[!0-9]*) mtime=$now ;; esac
       age=$((now - mtime))
-      if [ "$age" -ge "${FM_BUSY_LOCK_STALE_SECS:-5}" ]; then
+      if [ "$age" -ge "$stale" ]; then
         rmdir "$PUBLISH_LOCK" 2>/dev/null || rm -rf "$PUBLISH_LOCK" 2>/dev/null || true
-        mkdir "$PUBLISH_LOCK" 2>/dev/null && return 0
+        mkdir "$PUBLISH_LOCK" 2>/dev/null && { publish_lock_stamp || return 1; return 0; }
       fi
       return 1
     fi
     sleep 0.05
   done
+  publish_lock_stamp || return 1
   return 0
 }
-publish_lock_release() { rmdir "$PUBLISH_LOCK" 2>/dev/null || true; }
+
+publish_lock_release() {
+  local token=$PUBLISH_LOCK_TOKEN owner
+  PUBLISH_LOCK_TOKEN=
+  [ -n "$token" ] || return 0
+  owner=$(cat "$PUBLISH_LOCK/owner" 2>/dev/null || true)
+  [ "$owner" = "$token" ] || return 0
+  rm -f "$PUBLISH_LOCK/owner" 2>/dev/null || true
+  rmdir "$PUBLISH_LOCK" 2>/dev/null || true
+}
 
 write_record() {  # <gen> <seq>
   local tmp
@@ -257,6 +322,13 @@ write_record() {  # <gen> <seq>
 # lag the record by one event until the next turn boundary corrects it, never a
 # UI that contradicts firstmate's own truth.
 #
+# RETIREMENT is the single caller that names its state explicitly, because it
+# has just removed the record a re-read would consult and would therefore
+# publish nothing at all. It passes a literal at-rest state rather than
+# relaxing the record-derived path above, which stays exactly as it is for arm
+# and apply - that path is what keeps concurrent writers from inverting the UI,
+# and no caller with a record may bypass it.
+#
 # The cheap gate is bin/fm-backend.sh's own compatibility contract: a task meta
 # with no `backend=` line IS a tmux task, and tmux has no state surface to
 # publish to, so the default path returns here without sourcing or forking
@@ -265,9 +337,9 @@ write_record() {  # <gen> <seq>
 # keeps every other backend unchanged. An explicit --publish-backend/--target
 # pair (arm only, before any metadata exists) replaces that read; it never
 # relaxes it, because an absent pair still falls through to the metadata gate.
-publish_busy_state() {
+publish_busy_state() {  # [<explicit-state> <explicit-event>]
   local meta="$STATE/$ID.meta" backend=$PUBLISH_BACKEND target=$PUBLISH_TARGET
-  local budget parsed p_state p_event
+  local budget parsed p_state=${1:-} p_event=${2:-}
   if [ -z "$backend" ]; then
     [ -f "$meta" ] || return 0
     grep -q '^backend=' "$meta" 2>/dev/null || return 0
@@ -276,23 +348,17 @@ publish_busy_state() {
     # means exactly this - so name it here rather than forking to learn it.
     return 0
   fi
-  # fm-timeout-lib.sh's contract: a non-positive bound is NOT a bound, because
-  # `timeout 0` and the perl fallback's `alarm 0` both DISABLE the deadline. An
-  # override of 0 would therefore turn this hard bound into no bound at all, on
-  # a path a harness's turn hook waits for - so sanitize rather than trust the
-  # value, and fall back to the default for anything not strictly positive. A
-  # bad budget degrades to the default bound, never to an unbounded call.
-  budget=${FM_BUSY_PUBLISH_BUDGET_SECS:-5}
-  case "$budget" in
-    ''|.|*[!0-9.]*|*.*.*) budget=5 ;;
-    *[1-9]*) : ;;
-    *) budget=5 ;;
-  esac
-  publish_lock_acquire || return 0
-  parsed=$(fm_busy_record_read "$STATE" "$ID") || { publish_lock_release; return 0; }
-  # fm_busy_record_read prints "<state> <source> <event> <seq>"; source and seq
-  # are not published, so they are read into throwaways rather than reparsed.
-  read -r p_state _ p_event _ <<< "$parsed"
+  budget=$(publish_budget)
+  # The lock must outlive the bounded call it serializes, so its stale bound is
+  # that budget plus slack for the acquire spin and process startup around it.
+  publish_lock_acquire "$((budget + 2))" || return 0
+  if [ -z "$p_state" ]; then
+    parsed=$(fm_busy_record_read "$STATE" "$ID") || { publish_lock_release; return 0; }
+    # fm_busy_record_read prints "<state> <source> <event> <seq>"; source and
+    # seq are not published, so they are read into throwaways rather than
+    # reparsed.
+    read -r p_state _ p_event _ <<< "$parsed"
+  fi
   # shellcheck disable=SC2016  # Expansion is deliberately deferred to the child shell.
   fm_run_timed "$budget" bash -c '
     . "$1/fm-backend.sh" || exit 0
@@ -374,6 +440,7 @@ if [ "$CMD" = retire ]; then
   }
   lock_release
   umask "$old_umask"
+  publish_busy_state idle retire
   exit 0
 fi
 OLD_SEQ=0

@@ -614,12 +614,18 @@ test_busy_state_unknown_before_first_signal() {
 
 test_publish_maps_firstmate_state_to_thurbox_vocabulary() {
   local spec state event want got
-  # `done` is thurbox's "a turn just finished" word and belongs to the harness
-  # stop event alone; every other way a turn stops being in flight is at-rest
-  # `idle`, and an unlisted event takes the weaker of the two deliberately.
+  # `done` is thurbox's "a turn just finished" word and belongs to EVERY
+  # published harness's turn-end event: claude's Stop hook, opencode's two idle
+  # boundaries for the latched worker session, and pi's settled check. Every
+  # other way a turn stops being in flight - shutdown, an error stop, an
+  # interrupt, a retirement - is at-rest `idle`, and an unlisted event takes
+  # the weaker of the two deliberately.
   for spec in 'busy launch-brief working' 'busy user-prompt-submit working' \
-              'idle stop done' 'idle session-end idle' 'idle stop-failure idle' \
-              'idle interrupt idle'; do
+              'idle stop done' 'idle session-status-idle done' \
+              'idle session-idle done' 'idle agent-settled done' \
+              'idle session-end idle' 'idle stop-failure idle' \
+              'idle interrupt idle' 'idle retire idle' \
+              'idle some-future-token idle'; do
     # shellcheck disable=SC2086 # the specs above are fixed three-token literals.
     set -- $spec
     state=$1 event=$2 want=$3

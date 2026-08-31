@@ -625,11 +625,18 @@ fm_backend_thurbox_busy_state() {  # <target> [expected-label]
 #
 # The mapping is fm_backend_thurbox_busy_state's, inverted, plus the one
 # distinction thurbox's vocabulary draws that firstmate's does not: `done`
-# means "a turn just finished (shows until you look)" - the harness stop event
-# - while every other way a turn stops being in flight (process shutdown, an
-# error stop, an interrupt) is at-rest `idle`. Unlisted events take `idle`
-# deliberately: a state firstmate cannot place is never published as the
-# stronger `done`. `unknown` has no thurbox word at all, so it publishes
+# means "a turn just finished (shows until you look)". That word belongs to
+# EVERY published harness's turn-end event, not to claude's alone: claude's
+# Stop hook sends `stop`, opencode's latched worker session sends
+# `session-status-idle` and `session-idle` as it goes busy -> idle, and pi
+# sends `agent-settled` once its own idle check confirms the turn will not
+# continue. Keying `done` on claude's token alone would have rendered a
+# just-finished opencode or pi turn as at-rest. Every OTHER way a turn stops
+# being in flight is at-rest `idle`: process shutdown (`session-end`), an error
+# stop (`stop-failure`), an `interrupt` (which is not a completed turn), and a
+# retirement. Unlisted events take `idle` deliberately: a state firstmate
+# cannot place is never published as the stronger `done`. `unknown` has no
+# thurbox word at all, so it publishes
 # nothing and leaves whatever thurbox last recorded rather than asserting a
 # state firstmate cannot vouch for. thurbox's fourth word, `blocked` (waiting
 # on a human), is NOT published here: that condition lives in firstmate's
@@ -658,7 +665,7 @@ fm_backend_thurbox_publish_busy_state() {  # <target> <busy|idle|unknown> <event
     busy) hook=working ;;
     idle)
       case "$event" in
-        stop) hook='done' ;;
+        stop|session-status-idle|session-idle|agent-settled) hook='done' ;;
         *) hook=idle ;;
       esac
       ;;
