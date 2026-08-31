@@ -880,6 +880,46 @@ fm_backend_busy_state() {  # <backend> <target>
   esac
 }
 
+# fm_backend_publish_busy_state: the WRITE side of the same question
+# fm_backend_busy_state reads - report firstmate's semantic turn state INTO a
+# backend that renders agent state in its own UI, so a firstmate worker is not
+# the one session in that UI with no state at all. Only a backend with a native
+# state surface implements it; every other backend is a silent no-op, so no
+# caller has to know which is which.
+#
+# NOT one-way, and worth being precise about: an adapter that renders agent
+# state generally renders it from the same native field its own
+# fm_backend_busy_state reads, so what is published here is readable back
+# through that function. bin/fm-busy-lib.sh consults it on one path only - a
+# task with NO busy record at all, where a native `busy` verdict is trusted.
+# Two properties keep that honest rather than circular: the record outranks the
+# native read whenever a record exists, and the only value this can feed back is
+# one firstmate itself published, so the echo can restate firstmate's own last
+# state but never invent one. The busy record owned by bin/fm-busy-lib.sh
+# remains the source of truth, and nothing published here may be promoted above
+# it.
+#
+# The window where those two properties do NOT cover each other is a task whose
+# record has been deliberately removed while its endpoint stays alive
+# (`fm-control exit`): no record left to outrank the read, and a last published
+# `working` that the no-record path would go on trusting forever. That is why
+# bin/fm-busy-event.sh publishes an at-rest state on a successful retirement
+# too - a stopped worker reads as at rest rather than as confidently busy.
+#
+# Best-effort by contract: it always returns 0, because its only caller is
+# bin/fm-busy-event.sh's post-mutation side effect, which must never fail a
+# busy-state write or break a harness's own turn lifecycle.
+fm_backend_publish_busy_state() {  # <backend> <target> <busy|idle|unknown> <event>
+  local backend=$1
+  shift
+  fm_backend_source "$backend" 2>/dev/null || return 0
+  case "$backend" in
+    thurbox) fm_backend_thurbox_publish_busy_state "$@" || true ;;
+    *) : ;;
+  esac
+  return 0
+}
+
 # fm_backend_composer_state: classify the composer/input area of <target> as
 # empty|pending|pending-unproven|unknown for callers that need a pre-submit
 # input guard, a submit acknowledgement, or a launch-readiness check. It is

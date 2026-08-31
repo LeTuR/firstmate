@@ -804,6 +804,71 @@ A plain `command = "bash"` agent produced a pane that executed sent commands but
 
 Isolation limit, observed live: `THURBOX_CONFIG_DIR`/`THURBOX_DATA_DIR` relocate the config and database but **not** the tmux socket, and creating the first session in an instance also spawned thurbox's own `automation-heartbeat` window (a `while true; do thurbox-cli automation tick; sleep 60; done` loop) on that shared socket. It is not a session, so no `session delete --force` reclaims it; it was removed by hand.
 
+### Reporting Firstmate's own turn state
+
+thurbox 2.10.2 (schema 40), Linux x86_64, 2026-08-31.
+Unlike the pass above this one created and deleted nothing: it signalled a Firstmate worker session that already existed, which is why it could run against the operator's real thurbox without the isolation dance.
+`bin/fm-busy-event.sh` was driven directly, with task metadata naming that session's own endpoint, and `thurbox-cli session list --json` was read back after each event.
+
+The session used was a live Firstmate worker, and its starting rows are the bug this path removes: `hook_state: null`, `state: "uncovered"`, `hook_coverage: "none"` - alongside the operator's own `claude` session reporting real state from thurbox's own per-agent wiring.
+2.10.2 adds `hook_coverage`, which is derived from the agent name and is therefore `none` for the bare `shell` agent a Firstmate worker runs as.
+Verified explicitly: `hook_coverage: "none"` does **not** stop `session signal` from recording state, and the session's rendered `state` follows the signalled `hook_state`.
+
+```sh
+bin/fm-busy-event.sh arm  <state> <id>
+bin/fm-busy-event.sh apply <state> <id> idle --gen <gen> --source claude-hook --event stop
+bin/fm-busy-event.sh apply <state> <id> idle --gen <gen> --source claude-hook --event session-end
+bin/fm-busy-event.sh apply <state> <id> busy --gen <gen> --source claude-hook --event user-prompt-submit
+```
+
+Observed `hook_state` for that session, in order:
+
+```
+null -> working -> done -> idle -> working
+```
+
+Re-run against the final code after review, from a session parked at `idle`, with the launch turn taken from a state directory holding **no task metadata at all** (the real fresh-spawn shape, where `fm-spawn` arms before it writes metadata):
+
+```
+idle -> working -> done -> working -> idle -> (unknown: unchanged, idle)
+```
+
+The same arm with no endpoint named published nothing and left the session at `idle`, which is what the metadata gate every later event uses does when there is nothing on disk to resolve.
+
+| Guarantee | Command shape | Result |
+| --- | --- | --- |
+| Ambient identity is wrong for this writer | read `THURBOX_SESSION` from Firstmate's own pane process | Firstmate's pane exports its **own** session uuid, so a report that omitted `--session` from a recovery path would stamp the operator's session. |
+| Other sessions untouched | `session list --fields name,hook_state` across the run | Only the addressed session's `hook_state` changed. |
+| Default-backend task publishes nothing | the same events against metadata with no `backend=` line | `hook_state` unchanged across four applies, re-confirmed against the final code. |
+| A no-coverage agent can still be signalled | `session signal` against a `shell`-agent session with `hook_coverage: "none"` | Accepted; both `hook_state` and the rendered `state` follow it. |
+| Cost on the default path | 10 applies, wall clock | 43.5 ms/event, against 42.2 ms/event for the same script before the change - within noise. |
+| Cost on the thurbox path | 10 applies, wall clock | 115.5 ms/event, hard-bounded by the sanitized publish budget. |
+
+The `hook_state` values in that trace are the ones this pass observed for Claude's own event tokens.
+The full mapping every published harness's tokens take is stated as contract below, with the tests as its regression pointer.
+
+**Coverage limit, and it is a property of the busy contract rather than of this backend.** Only the harnesses whose wiring drives `bin/fm-busy-event.sh` report state: `claude`, `opencode`, and `pi`/`pi-signed`.
+`codex`, `grok`, `kimi`, `cursor`, and `muse` are not armed for the contract (`bin/fm-busy-lib.sh` owns each gate and the evidence it waits for), so a worker on one of those harnesses still renders `uncovered`.
+
+**The traffic is not one-way**, and an earlier version of this record claimed it was.
+`session signal` writes the same `hook_state` that the adapter's native `busy_state` reads, and `bin/fm-busy-lib.sh` consults that read on one path: a task with no busy record at all, where a native `working` verdict is trusted.
+The busy record was not changed and still outranks that read whenever a record exists, and the only value that can feed back is one Firstmate itself published - so the echo can restate Firstmate's own last reported state but never invent one.
+
+**The turn-end vocabulary is the current contract rather than a live observation.**
+The live pass above drove Claude's `stop`, so `done` is recorded from it for that token only.
+The contract is that `done` belongs to every published harness's turn end - Claude's `stop`, OpenCode's `session-status-idle` and `session-idle` for the latched worker session, and pi's `agent-settled` - while `session-end`, `stop-failure`, `interrupt`, and a retirement are at-rest `idle`.
+`tests/fm-busy-state.test.sh` and `tests/fm-backend-thurbox.test.sh` are the regression pointers for all four turn-end tokens and for the at-rest ones.
+
+**The at-rest report on retirement is likewise contract, not a live observation from this pass.**
+A successful retirement reports `idle`, named literally because retirement removes the record a re-read would consult.
+Without it, `fm-control exit` left the session on its last `working` while keeping the endpoint alive, and the no-record classification path went on trusting that native verdict.
+`tests/fm-busy-state.test.sh` is the regression pointer.
+
+The bounds and ordering rules are pinned portably rather than by this live pass.
+`tests/fm-busy-state.test.sh` drives a stubbed CLI that can hang and can be held open, and its assertions were mutation-checked against the code with each fix reverted: an unsanitized budget of `0` leaves the write running for the stub's full 10 s cap instead of being bounded, and removing the publish lock lets a superseded publication land last, leaving the UI on `done` while the record says busy.
+A fractional budget is refused for the same reason as a zero one, since the perl fallback's `alarm` takes whole seconds and truncates `0.5` to `alarm(0)`.
+The publish lock's stale bound is derived from that sanitized budget rather than from `FM_BUSY_LOCK_STALE_SECS`, which defaults equal to it, and the lock carries an owner token so a holder whose lock was broken releases nothing instead of removing the next holder's.
+
 Not verified here, and therefore declared absent in the adapter: a recovery-grade agent-state classifier, a composer identity probe, and any native event-push reader.
 
 ## Codex App host tools
