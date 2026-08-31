@@ -233,7 +233,7 @@ write_record() {  # <gen> <seq>
 # Four properties it must hold, because it runs on a harness's own hook path:
 # it never fails the mutation (every failure mode returns 0), it never writes to
 # this script's stdout (arm's caller reads the minted gen from there), it never
-# runs unbounded, and it never reports a state the record has moved past.
+# runs unbounded, and it never reports a state the record did not hold.
 #
 # THE STATE COMES FROM THE RECORD, not from this invocation's own arguments,
 # and that is what keeps concurrent writers from inverting the UI. The backend
@@ -246,7 +246,8 @@ write_record() {  # <gen> <seq>
 # UI reading `working` against an idle record, which is the very mislabel this
 # whole path exists to remove. Re-reading the record instead means a superseded
 # invocation publishes the SUPERSEDING state rather than its own stale one, so
-# whichever order the two calls land in, both agree with the record.
+# whichever order the two calls land in, each agrees with the record as it stood
+# when that call read it.
 # fm_busy_record_read is the owner of that parse and of the gen binding, so a
 # retired or superseded-incarnation record simply yields no state to publish.
 #
