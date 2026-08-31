@@ -128,6 +128,33 @@ case "${2:-}" in
     grep -q "^$want	" "$ROWS" || { echo "session not found" >&2; exit 1; }
     jq -Rs '{output: .}' < "${FM_TB_CAPTURE:-/dev/null}"
     ;;
+  signal)
+    # thurbox records the state on the session row; that row is what the TUI
+    # renders. Identity DEFAULTS to the calling pane's $THURBOX_SESSION when
+    # --session is not passed, exactly as the real CLI documents - reproduced
+    # here so a caller that forgets --session stamps the wrong row instead of
+    # silently looking correct.
+    sess=''; want_state=''
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --session) sess=$2; shift 2 ;;
+        --state) want_state=$2; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    [ -n "$sess" ] || sess=${THURBOX_SESSION:-}
+    [ -n "$sess" ] || { echo "no session" >&2; exit 1; }
+    found=0
+    tmpf=$(mktemp)
+    while IFS=$'\t' read -r uuid name pane btype hook; do
+      [ -n "${uuid:-}" ] || continue
+      if [ "$uuid" = "$sess" ]; then hook=$want_state; found=1; fi
+      printf '%s\t%s\t%s\t%s\t%s\n' "$uuid" "$name" "$pane" "$btype" "$hook"
+    done < "$ROWS" > "$tmpf"
+    mv "$tmpf" "$ROWS"
+    [ "$found" = 1 ] || { echo "session not found" >&2; exit 1; }
+    printf '{"id":"%s","state":"%s"}\n' "$sess" "$want_state"
+    ;;
   send)
     exit 0
     ;;
@@ -224,6 +251,12 @@ reset_world() {
 
 add_row() {  # <uuid> <name> <pane> <btype> <hook>
   printf '%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" >> "$FM_TB_ROWS"
+}
+
+# hook_state_of <uuid>: the state column thurbox's TUI would render for that
+# session, read from the fake world rather than from any adapter code path.
+hook_state_of() {  # <uuid>
+  awk -F'\t' -v want="$1" '$1 == want { print $5 }' "$FM_TB_ROWS"
 }
 
 # The adapter resolves its CLI through FM_THURBOX_BIN and its tmux through
@@ -576,6 +609,94 @@ test_busy_state_unknown_before_first_signal() {
 }
 
 # ============================================================================
+# publishing firstmate's own state (the write side of the same question)
+# ============================================================================
+
+test_publish_maps_firstmate_state_to_thurbox_vocabulary() {
+  local spec state event want got
+  # `done` is thurbox's "a turn just finished" word and belongs to the harness
+  # stop event alone; every other way a turn stops being in flight is at-rest
+  # `idle`, and an unlisted event takes the weaker of the two deliberately.
+  for spec in 'busy launch-brief working' 'busy user-prompt-submit working' \
+              'idle stop done' 'idle session-end idle' 'idle stop-failure idle' \
+              'idle interrupt idle'; do
+    # shellcheck disable=SC2086 # the specs above are fixed three-token literals.
+    set -- $spec
+    state=$1 event=$2 want=$3
+    reset_world
+    add_row "$UUID" "$TITLE" "%20" local-tmux -
+    fm_backend_thurbox_publish_busy_state "$UUID:%20" "$state" "$event" \
+      || fail "publish returned non-zero for $state/$event"
+    got=$(hook_state_of "$UUID")
+    [ "$got" = "$want" ] || fail "$state/$event published '$got', expected '$want'"
+  done
+  pass "publish maps firstmate's state and event onto thurbox's own vocabulary"
+}
+
+test_publish_leaves_an_unknown_state_alone() {
+  reset_world
+  add_row "$UUID" "$TITLE" "%20" local-tmux working
+  fm_backend_thurbox_publish_busy_state "$UUID:%20" unknown stop \
+    || fail "publish returned non-zero for unknown"
+  # A state firstmate cannot place must not overwrite what thurbox already
+  # knows, and must not be asserted as one firstmate can vouch for.
+  [ "$(hook_state_of "$UUID")" = working ] || fail "unknown overwrote a known state"
+  assert_no_grep $'session\x1fsignal' "$FM_TB_LOG" "unknown reached the CLI at all"
+  pass "publish reports nothing at all for unknown"
+}
+
+test_publish_targets_the_recorded_session_not_the_ambient_one() {
+  local other=99999999-9999-9999-9999-999999999999
+  reset_world
+  add_row "$UUID" "$TITLE" "%20" local-tmux -
+  add_row "$other" firstmate "%30" local-tmux -
+  # firstmate's OWN pane is a thurbox session too, and it exports its own uuid;
+  # bin/fm-busy-event.sh runs from there on the recovery paths. If publishing
+  # leaned on that inherited identity, this is the row it would stamp.
+  THURBOX_SESSION=$other fm_backend_thurbox_publish_busy_state "$UUID:%20" busy stop
+  [ "$(hook_state_of "$UUID")" = working ] || fail "the task's own session was not updated"
+  [ "$(hook_state_of "$other")" = - ] \
+    || fail "publish stamped the ambient \$THURBOX_SESSION row instead of the task's"
+  pass "publish addresses the recorded session, never the inherited \$THURBOX_SESSION"
+}
+
+test_publish_costs_one_call_and_no_session_get() {
+  reset_world
+  add_row "$UUID" "$TITLE" "%20" local-tmux -
+  fm_backend_thurbox_publish_busy_state "$UUID:%20" busy stop
+  # Publishing runs on a harness's turn hook, so it re-resolves nothing: the
+  # session row is addressed by its durable uuid and this is not a destructive
+  # operation.
+  assert_no_grep $'session\x1fget' "$FM_TB_LOG" "publish spent a session get round-trip"
+  [ "$(grep -c . "$FM_TB_LOG")" = 1 ] || fail "publish made more than one CLI call"
+  pass "publish costs exactly one CLI call and never re-resolves the pane"
+}
+
+test_publish_round_trips_to_the_native_read() {
+  reset_world
+  add_row "$UUID" "$TITLE" "%20" local-tmux -
+  [ "$(fm_backend_thurbox_busy_state "$UUID:%20" fm-t1)" = unknown ] \
+    || fail "the fixture did not start from an unreported session"
+  fm_backend_thurbox_publish_busy_state "$UUID:%20" busy user-prompt-submit
+  [ "$(fm_backend_thurbox_busy_state "$UUID:%20" fm-t1)" = busy ] \
+    || fail "a published state did not survive thurbox's own round-trip"
+  pass "a published state round-trips through thurbox exactly as an agent's own would"
+}
+
+test_publish_tolerates_a_gone_or_malformed_session() {
+  reset_world
+  # No row at all: the CLI exits non-zero and publishing must still succeed.
+  fm_backend_thurbox_publish_busy_state "$UUID:%20" busy stop \
+    || fail "publish failed when the session was gone"
+  # A target with no pane half is not a thurbox target; nothing is sent.
+  : > "$FM_TB_LOG"
+  fm_backend_thurbox_publish_busy_state "$UUID" busy stop \
+    || fail "publish failed on a malformed target"
+  assert_no_grep $'session\x1fsignal' "$FM_TB_LOG" "a malformed target still reached the CLI"
+  pass "publish stays best-effort for a gone session and refuses a malformed target"
+}
+
+# ============================================================================
 # teardown + discovery
 # ============================================================================
 
@@ -720,6 +841,12 @@ test_composer_caps_claim_styled_and_cursor
 test_composer_state_unknown_when_pane_unreadable
 test_busy_state_maps_thurbox_hook_state
 test_busy_state_unknown_before_first_signal
+test_publish_maps_firstmate_state_to_thurbox_vocabulary
+test_publish_leaves_an_unknown_state_alone
+test_publish_targets_the_recorded_session_not_the_ambient_one
+test_publish_costs_one_call_and_no_session_get
+test_publish_round_trips_to_the_native_read
+test_publish_tolerates_a_gone_or_malformed_session
 test_kill_forces_window_reclaim
 test_kill_refuses_recycled_uuid
 test_list_live_filters_and_skips_unaddressable

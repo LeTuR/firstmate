@@ -73,6 +73,25 @@ So every operation re-resolves the pane id from the UUID through `session get` b
 5. **`session delete --force` really reclaims the window** (`"killed_window": true`), and also removes worktrees and cancels pending scheduled commands. The non-forced delete only soft-deletes the row and defers cleanup to the TUI's next sync - useless headlessly, so kill always passes `--force`.
 6. **`session signal --state <working|blocked|done|idle>`** writes `hook_state`, and `session get --json` reads it back (verified round-trip). thurbox's agents call this from their own harness hooks. The vocabulary is word-for-word herdr's `agent_status` vocabulary, so `busy_state` reuses herdr's exact mapping, including `blocked` → idle (blocked means waiting on a human, not a turn in flight). `hook_state` is **null until an agent first signals**, which classifies as `unknown`, never `idle`.
 
+### Reporting Firstmate's own turn state
+
+thurbox renders a session's state from `hook_state`, and its own agents fill that in from per-agent hook wiring thurbox installs for them (its `agents.toml` points a `claude` entry at a settings file that calls `session signal`).
+A Firstmate worker never gets that wiring: it is launched through the bare shell agent, because Firstmate runs treehouse and launches the harness itself with its own flags.
+Left alone, every Firstmate worker would therefore sit at `hook_state: null` for its whole life and render as `uncovered` while the operator's own sessions show real state.
+
+So Firstmate reports the state itself, from the one writer of its semantic busy-state contract (`bin/fm-busy-event.sh`), after - and only after - that writer has successfully replaced the task's busy record.
+`session signal` is a supported integration point for exactly this case; its own `--help` describes a driver that launches its own agent reporting state through it.
+The mapping is the `hook_state` read in finding 6 inverted, plus the one distinction thurbox's vocabulary draws that Firstmate's does not: `done` is thurbox's "a turn just finished (shows until you look)", which is the harness stop event, while every other way a turn stops being in flight - process shutdown, an error stop, an interrupt - is at-rest `idle`.
+A state Firstmate cannot place publishes nothing at all rather than asserting one it cannot vouch for.
+`blocked` is not published here: waiting on a human lives in Firstmate's status-line vocabulary, not in the busy contract.
+
+Two properties are load-bearing.
+The session is named explicitly with `--session`, never left to the `$THURBOX_SESSION` the CLI falls back to, because that writer also runs from Firstmate's own recovery paths and Firstmate's own pane is itself a thurbox session that exports its own uuid - the inherited default would stamp a worker's turn state onto the operator's session.
+And the whole report is best-effort and hard-bounded: a missing CLI, a gone session, a non-zero exit, or a slow call can never fail the busy-state write or hold a harness's turn hook open.
+
+The traffic is one-way.
+Nothing published here re-enters Firstmate's own classification, which continues to read the busy record; the native `hook_state` read of finding 6 remains a separate, record-subordinate signal.
+
 **Refusals.** A session whose `backend_type` is not `local-tmux` - a remote session from `session create --host`, whose window lives on another machine over SSH - is refused outright, because every pane primitive would silently address nothing. A session name that does not match the expected task's scoped title is refused, so a recycled UUID can never be sent to or deleted by mistake. A scoped name over thurbox's documented 64-character limit is refused loudly at spawn rather than silently truncated.
 
 ### Isolation and its limit
@@ -97,6 +116,7 @@ thurbox can own worktrees natively (`session create --worktree-branch/--base-bra
 
 ## Regression entry points
 
-- `tests/fm-backend-thurbox.test.sh` - 37 stubbed-CLI unit tests covering the version and socket gates, naming and length limits, the shell-agent requirement, create and its duplicate refusal, the full target-resolution model (pane re-resolution after restart, name-mismatch and remote refusals, recovery by label, fail-closed cases), the `send_literal`-never-auto-submits rule, capture and composer routing, the `hook_state` mapping, forced teardown, discovery scoping, endpoint-metadata validation, and both halves of the detection rule.
+- `tests/fm-backend-thurbox.test.sh` - 44 stubbed-CLI unit tests covering the version and socket gates, naming and length limits, the shell-agent requirement, create and its duplicate refusal, the full target-resolution model (pane re-resolution after restart, name-mismatch and remote refusals, recovery by label, fail-closed cases), the `send_literal`-never-auto-submits rule, capture and composer routing, the `hook_state` mapping in both directions - reading it, and publishing Firstmate's own state into it with the recorded session rather than the inherited `$THURBOX_SESSION` - forced teardown, discovery scoping, endpoint-metadata validation, and both halves of the detection rule.
 - `tests/thurbox-test-safety.sh` - the fail-closed guard that keeps any thurbox test away from a real thurbox.
+- `tests/fm-busy-state.test.sh` - when the busy-state writer publishes and when it must not: after a written record only, never after a refused or retired event, nothing for a task with no recorded backend or one whose backend has no state surface, and never failing the write or reaching the writer's own stdout.
 - `tests/fm-backend.test.sh` - shared dispatcher and detection contract; every case neutralizes `THURBOX_SESSION` so the suite stays deterministic when run from inside a thurbox session.

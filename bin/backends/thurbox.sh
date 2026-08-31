@@ -607,6 +607,69 @@ fm_backend_thurbox_busy_state() {  # <target> [expected-label]
   esac
 }
 
+# fm_backend_thurbox_publish_busy_state: report firstmate's own semantic turn
+# state INTO thurbox's native `hook_state` - the exact inverse of
+# fm_backend_thurbox_busy_state above, and the reason a firstmate worker shows
+# a real state in thurbox's TUI instead of `uncovered`.
+#
+# WHY THIS EXISTS: thurbox's own agents report their lifecycle from per-agent
+# hook wiring that thurbox installs for them (its agents.toml wires, e.g., a
+# claude entry to a settings file that calls `session signal`). A firstmate
+# worker is launched through the bare shell agent, because firstmate runs
+# treehouse and launches the harness itself with its own flags
+# (fm_backend_thurbox_agent above), so none of that per-agent wiring is ever
+# installed and the session's `hook_state` stays null for the task's whole
+# life. `session signal` is a SUPPORTED integration point for exactly this
+# case, documented in its own --help as the way a driver that launches its own
+# agent reports state.
+#
+# The mapping is fm_backend_thurbox_busy_state's, inverted, plus the one
+# distinction thurbox's vocabulary draws that firstmate's does not: `done`
+# means "a turn just finished (shows until you look)" - the harness stop event
+# - while every other way a turn stops being in flight (process shutdown, an
+# error stop, an interrupt) is at-rest `idle`. Unlisted events take `idle`
+# deliberately: a state firstmate cannot place is never published as the
+# stronger `done`. `unknown` has no thurbox word at all, so it publishes
+# nothing and leaves whatever thurbox last recorded rather than asserting a
+# state firstmate cannot vouch for. thurbox's fourth word, `blocked` (waiting
+# on a human), is NOT published here: that condition lives in firstmate's
+# status-line vocabulary (bin/fm-classify-lib.sh), not in the busy contract.
+#
+# --session is passed EXPLICITLY, never left to the inherited $THURBOX_SESSION
+# the CLI falls back to. That variable is set on the pane and inherited by
+# every process in it, so it would be correct inside a worker's own hook - but
+# bin/fm-busy-event.sh also runs from firstmate's own recovery paths, and
+# firstmate's own pane is itself a thurbox session (verified live: that pane
+# exports its OWN session uuid), so the inherited default would stamp a
+# worker's turn state onto the captain's session.
+#
+# parse_target, not target_ready: `session signal` addresses the durable
+# session row rather than the pane, and publishing is not a destructive
+# operation, so the extra `session get` round-trip target_ready spends on
+# every turn boundary would buy nothing. A session that is gone simply makes
+# the CLI exit non-zero, which this swallows.
+#
+# Best-effort by contract, and quiet: it always returns 0 and never writes to
+# stdout, because its only caller is a post-mutation side effect on a harness
+# hook path that must never fail a busy-state write or break a turn.
+fm_backend_thurbox_publish_busy_state() {  # <target> <busy|idle|unknown> <event>
+  local target=$1 state=$2 event=$3 hook
+  case "$state" in
+    busy) hook=working ;;
+    idle)
+      case "$event" in
+        stop) hook='done' ;;
+        *) hook=idle ;;
+      esac
+      ;;
+    *) return 0 ;;
+  esac
+  fm_backend_thurbox_parse_target "$target" || return 0
+  fm_backend_thurbox_cli session signal \
+    --session "$FM_BACKEND_THURBOX_SESSION" --state "$hook" >/dev/null 2>&1 || return 0
+  return 0
+}
+
 # fm_backend_thurbox_kill: remove the task's thurbox session, best-effort
 # (mirrors every other backend's `kill` `|| true` contract).
 #

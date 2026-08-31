@@ -9,6 +9,13 @@
 # another adapter); endpoint death is the only process-level override and
 # yields dead, never busy; converted adapters never classify from rendered
 # footer text. All hermetic over temp dirs; no real agent session is invoked.
+#
+# It also covers the writer's one side effect: publishing the state it just
+# wrote to a runtime backend that renders agent state in its own UI. Those
+# cases drive the real bin/fm-busy-event.sh against a STUBBED thurbox CLI
+# (tests/thurbox-test-safety.sh refuses anything else), because the property
+# under test is when firstmate publishes, not what thurbox does with it -
+# tests/fm-backend-thurbox.test.sh owns the vocabulary and the round-trip.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -24,6 +31,67 @@ new_state_dir() {  # <name>
   local d="$TMP_ROOT/$1/state"
   mkdir -p "$d"
   printf '%s' "$d"
+}
+
+# --- publish fixture ---------------------------------------------------------
+#
+# A stub thurbox CLI that records every `session signal` as
+# "<session-uuid> <state>". FM_PUBLISH_EXIT forces a failing CLI, and
+# FM_PUBLISH_NOISE makes it chatty on both streams, so the two properties the
+# hook path depends on - a refusal never fails the mutation, and nothing ever
+# reaches this script's own stdout - are exercised rather than assumed.
+PUBLISH_BIN="$TMP_ROOT/fakebin/thurbox-cli"
+PUBLISH_LOG="$TMP_ROOT/publish.log"
+mkdir -p "$TMP_ROOT/fakebin"
+cat > "$PUBLISH_BIN" <<'SH'
+#!/usr/bin/env bash
+set -u
+[ -z "${FM_PUBLISH_NOISE:-}" ] || { echo "stub chatter on stdout"; echo "stub chatter on stderr" >&2; }
+sess=''; state=''
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --session) sess=$2; shift 2 ;;
+    --state) state=$2; shift 2 ;;
+    *) shift ;;
+  esac
+done
+printf '%s %s\n' "$sess" "$state" >> "${FM_PUBLISH_LOG:?}"
+exit "${FM_PUBLISH_EXIT:-0}"
+SH
+chmod +x "$PUBLISH_BIN"
+export FM_PUBLISH_LOG="$PUBLISH_LOG"
+export FM_THURBOX_BIN="$PUBLISH_BIN"
+
+# shellcheck source=tests/thurbox-test-safety.sh
+. "$(dirname "${BASH_SOURCE[0]}")/thurbox-test-safety.sh"
+thurbox_refuse_if_unsafe "$TMP_ROOT" \
+  || fail "thurbox safety guard refused this suite's own publish stub"
+
+PUBLISH_UUID=aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee
+
+reset_publish_log() {
+  : > "$PUBLISH_LOG"
+  unset FM_PUBLISH_EXIT FM_PUBLISH_NOISE 2>/dev/null || true
+}
+
+# publish_meta <state-dir> <id> [backend]: the task metadata the writer reads to
+# decide where, if anywhere, to publish. No backend argument writes NO backend=
+# line at all, which IS a tmux task under bin/fm-backend.sh's compatibility
+# contract.
+publish_meta() {  # <state-dir> <id> [backend]
+  local state=$1 id=$2 backend=${3:-}
+  {
+    echo "window=$PUBLISH_UUID:%20"
+    echo "endpoint_task_id=$id"
+    echo "worktree=$state"
+    echo "project=$state"
+    echo "harness=claude"
+    [ -z "$backend" ] || echo "backend=$backend"
+  } > "$state/$id.meta"
+}
+
+published() {
+  cat "$PUBLISH_LOG"
 }
 
 # --- writer: arm and apply ---------------------------------------------------
@@ -439,6 +507,125 @@ test_boolean_view_never_promotes_unknown() {
   pass "the boolean view reports busy only on an exact busy verdict"
 }
 
+# --- writer side effect: publishing to the task's runtime backend -----------
+
+test_publish_reports_every_written_state_to_a_thurbox_task() {
+  local state gen
+  state=$(new_state_dir publish-thurbox)
+  publish_meta "$state" t1 thurbox
+  reset_publish_log
+  gen=$("$EV" arm "$state" t1) || fail "arm failed"
+  [ "$(published)" = "$PUBLISH_UUID working" ] \
+    || fail "arm did not publish the seeded turn, got '$(published)'"
+  reset_publish_log
+  "$EV" apply "$state" t1 idle --gen "$gen" --source claude-hook --event stop \
+    || fail "apply stop failed"
+  [ "$(published)" = "$PUBLISH_UUID done" ] \
+    || fail "a finished turn did not publish done, got '$(published)'"
+  reset_publish_log
+  "$EV" apply "$state" t1 busy --gen "$gen" --source claude-hook --event user-prompt-submit
+  "$EV" apply "$state" t1 idle --gen "$gen" --source claude-hook --event session-end
+  [ "$(published)" = "$PUBLISH_UUID working
+$PUBLISH_UUID idle" ] || fail "expected working then idle, got '$(published)'"
+  pass "each written state is published to the task's thurbox session"
+}
+
+test_publish_is_skipped_for_a_default_backend_task() {
+  local state gen before after
+  state=$(new_state_dir publish-default)
+  publish_meta "$state" t1
+  reset_publish_log
+  gen=$("$EV" arm "$state" t1) || fail "arm failed"
+  before=$(fm_busy_record_read "$state" t1)
+  "$EV" apply "$state" t1 idle --gen "$gen" --source claude-hook --event stop \
+    || fail "apply failed"
+  after=$(fm_busy_record_read "$state" t1)
+  [ -z "$(published)" ] || fail "a default-backend task published '$(published)'"
+  [ "$before" != "$after" ] || fail "the record did not advance"
+  [ "$(fm_busy_classify tmux w1 claude t1 "$state")" = "idle claude-hook" ] \
+    || fail "the default path's own classification changed"
+  pass "a task with no recorded backend publishes nothing and is otherwise unchanged"
+}
+
+test_publish_is_a_no_op_for_a_backend_without_a_state_surface() {
+  local state gen
+  state=$(new_state_dir publish-herdr)
+  publish_meta "$state" t1 herdr
+  reset_publish_log
+  gen=$("$EV" arm "$state" t1) || fail "arm failed"
+  "$EV" apply "$state" t1 idle --gen "$gen" --source claude-hook --event stop \
+    || fail "apply failed"
+  [ -z "$(published)" ] || fail "a herdr task published '$(published)'"
+  [ "$(fm_busy_classify herdr "$PUBLISH_UUID:%20" claude t1 "$state")" = "idle claude-hook" ] \
+    || fail "the herdr path's own classification changed"
+  pass "a backend with no state surface is a silent no-op, record unchanged"
+}
+
+test_publish_never_reports_a_state_firstmate_cannot_place() {
+  local state gen
+  state=$(new_state_dir publish-unknown)
+  publish_meta "$state" t1 thurbox
+  gen=$("$EV" arm "$state" t1)
+  reset_publish_log
+  "$EV" apply "$state" t1 unknown --gen "$gen" --source claude-hook --event session-end \
+    || fail "apply unknown failed"
+  [ -z "$(published)" ] || fail "unknown was published as '$(published)'"
+  pass "an unknown state is written to the record but published to nothing"
+}
+
+test_publish_never_follows_a_refused_or_retired_event() {
+  local state gen
+  state=$(new_state_dir publish-refused)
+  publish_meta "$state" t1 thurbox
+  gen=$("$EV" arm "$state" t1)
+  reset_publish_log
+  # A hook that outlived its incarnation is refused at the record, so there is
+  # no state to publish either.
+  if "$EV" apply "$state" t1 busy --gen "gstale.1.2" --source claude-hook --event user-prompt-submit 2>/dev/null; then
+    fail "a stale-gen event was not refused"
+  fi
+  [ -z "$(published)" ] || fail "a refused event published '$(published)'"
+  "$EV" retire "$state" t1 --gen "$gen" || fail "retire failed"
+  [ -z "$(published)" ] || fail "a retirement published '$(published)'"
+  pass "publishing follows a written record only, never a refused or retired event"
+}
+
+test_publish_failure_never_fails_the_mutation() {
+  local state gen out
+  state=$(new_state_dir publish-failure)
+  publish_meta "$state" t1 thurbox
+  gen=$("$EV" arm "$state" t1)
+  reset_publish_log
+  export FM_PUBLISH_EXIT=3
+  "$EV" apply "$state" t1 idle --gen "$gen" --source claude-hook --event stop \
+    || fail "a failing publish failed the busy-state write"
+  out=$(fm_busy_classify tmux w1 claude t1 "$state")
+  [ "$out" = "idle claude-hook" ] || fail "expected 'idle claude-hook', got '$out'"
+  reset_publish_log
+  # An absent CLI is the same class of problem and must behave the same way.
+  FM_THURBOX_BIN="$TMP_ROOT/does-not-exist" \
+    "$EV" apply "$state" t1 busy --gen "$gen" --source claude-hook --event user-prompt-submit \
+    || fail "a missing publish CLI failed the busy-state write"
+  out=$(fm_busy_classify tmux w1 claude t1 "$state")
+  [ "$out" = "busy claude-hook" ] || fail "expected 'busy claude-hook', got '$out'"
+  pass "a refused, failing, or absent publish never fails the busy-state write"
+}
+
+test_publish_never_pollutes_the_writer_stdout() {
+  local state gen
+  state=$(new_state_dir publish-stdout)
+  publish_meta "$state" t1 thurbox
+  reset_publish_log
+  export FM_PUBLISH_NOISE=1
+  # fm-spawn reads the minted gen from arm's stdout, so a chatty backend CLI
+  # must not reach it.
+  gen=$("$EV" arm "$state" t1 2>/dev/null) || fail "arm failed"
+  [ "$gen" = "$(cat "$state/t1.busy-gen")" ] \
+    || fail "arm's stdout carried more than the minted gen: '$gen'"
+  unset FM_PUBLISH_NOISE
+  pass "publishing never writes to the writer's own stdout"
+}
+
 test_arm_seeds_busy_spawn
 test_apply_advances_seq_and_source
 test_apply_current_gen_reset
@@ -461,5 +648,12 @@ test_dead_endpoint_overrides
 test_herdr_native_busy_only
 test_record_read_leaves_caller_shell_intact
 test_boolean_view_never_promotes_unknown
+test_publish_reports_every_written_state_to_a_thurbox_task
+test_publish_is_skipped_for_a_default_backend_task
+test_publish_is_a_no_op_for_a_backend_without_a_state_surface
+test_publish_never_reports_a_state_firstmate_cannot_place
+test_publish_never_follows_a_refused_or_retired_event
+test_publish_failure_never_fails_the_mutation
+test_publish_never_pollutes_the_writer_stdout
 
 echo "all fm-busy-state tests passed"

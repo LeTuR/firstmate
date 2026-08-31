@@ -880,6 +880,33 @@ fm_backend_busy_state() {  # <backend> <target>
   esac
 }
 
+# fm_backend_publish_busy_state: the WRITE side of the same question
+# fm_backend_busy_state reads - report firstmate's semantic turn state INTO a
+# backend that renders agent state in its own UI, so a firstmate worker is not
+# the one session in that UI with no state at all. Only a backend with a native
+# state surface implements it; every other backend is a silent no-op, so no
+# caller has to know which is which.
+#
+# One-way by design. The published state is never read back: firstmate keeps
+# classifying from the busy record owned by bin/fm-busy-lib.sh, and an
+# adapter's native READ (fm_backend_busy_state above) remains a separate,
+# record-subordinate signal. Nothing here may become an input to that
+# classification.
+#
+# Best-effort by contract: it always returns 0, because its only caller is
+# bin/fm-busy-event.sh's post-mutation side effect, which must never fail a
+# busy-state write or break a harness's own turn lifecycle.
+fm_backend_publish_busy_state() {  # <backend> <target> <busy|idle|unknown> <event>
+  local backend=$1
+  shift
+  fm_backend_source "$backend" 2>/dev/null || return 0
+  case "$backend" in
+    thurbox) fm_backend_thurbox_publish_busy_state "$@" || true ;;
+    *) : ;;
+  esac
+  return 0
+}
+
 # fm_backend_composer_state: classify the composer/input area of <target> as
 # empty|pending|pending-unproven|unknown for callers that need a pre-submit
 # input guard, a submit acknowledgement, or a launch-readiness check. It is

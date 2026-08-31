@@ -804,6 +804,35 @@ A plain `command = "bash"` agent produced a pane that executed sent commands but
 
 Isolation limit, observed live: `THURBOX_CONFIG_DIR`/`THURBOX_DATA_DIR` relocate the config and database but **not** the tmux socket, and creating the first session in an instance also spawned thurbox's own `automation-heartbeat` window (a `while true; do thurbox-cli automation tick; sleep 60; done` loop) on that shared socket. It is not a session, so no `session delete --force` reclaims it; it was removed by hand.
 
+### Reporting Firstmate's own turn state
+
+thurbox 2.9.2, Linux x86_64, 2026-08-31.
+Unlike the pass above this one created and deleted nothing: it signalled a Firstmate worker session that already existed, which is why it could run against the operator's real thurbox without the isolation dance.
+`bin/fm-busy-event.sh` was driven directly, with task metadata naming that session's own endpoint, and `thurbox-cli session list --json` was read back after each event.
+
+```sh
+bin/fm-busy-event.sh arm  <state> <id>
+bin/fm-busy-event.sh apply <state> <id> idle --gen <gen> --source claude-hook --event stop
+bin/fm-busy-event.sh apply <state> <id> idle --gen <gen> --source claude-hook --event session-end
+bin/fm-busy-event.sh apply <state> <id> busy --gen <gen> --source claude-hook --event user-prompt-submit
+```
+
+Observed `hook_state` for that session, in order:
+
+```
+null -> working -> done -> idle -> working
+```
+
+| Guarantee | Command shape | Result |
+| --- | --- | --- |
+| Ambient identity is wrong for this writer | read `THURBOX_SESSION` from Firstmate's own pane process | Firstmate's pane exports its **own** session uuid, so a report that omitted `--session` from a recovery path would stamp the operator's session. |
+| Other sessions untouched | `session list --fields name,hook_state` across the run | Only the addressed session's `hook_state` changed. |
+| Default-backend task publishes nothing | the same events against metadata with no `backend=` line | `hook_state` unchanged across three applies. |
+| Cost on the default path | 10 applies, wall clock | 43.5 ms/event, against 42.2 ms/event for the same script before the change - within noise. |
+| Cost on the thurbox path | 10 applies, wall clock | 115.5 ms/event, hard-bounded by `FM_BUSY_PUBLISH_BUDGET_SECS`. |
+
+`bin/fm-busy-lib.sh`'s classification was not changed and does not read this back; the busy record remains the source of truth.
+
 Not verified here, and therefore declared absent in the adapter: a recovery-grade agent-state classifier, a composer identity probe, and any native event-push reader.
 
 ## Codex App host tools

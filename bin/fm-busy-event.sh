@@ -32,6 +32,13 @@
 # Exit codes: 0 applied; 1 refused (stale gen, unarmed task, lock timeout,
 # invalid input); 2 usage. Adapter hook command lines append `|| true` so a
 # refusal never breaks the harness's own lifecycle.
+#
+# After a SUCCESSFUL arm or apply - never before one, never for a refused
+# event, and never for a retirement - the state just written is published to
+# the task's runtime backend when that backend renders agent state in its own
+# UI (fm_backend_publish_busy_state in bin/fm-backend.sh). That is a one-way,
+# bounded, best-effort side effect of the mutation: it cannot fail the write
+# above, and nothing it publishes re-enters firstmate's own classification.
 set -u
 
 usage() {
@@ -48,6 +55,10 @@ EOF
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=bin/fm-busy-lib.sh
 . "$SCRIPT_DIR/fm-busy-lib.sh"
+# fm_run_timed: the shared hard bound around the publish side effect below, so
+# a wedged backend CLI can never hold a harness's turn hook open.
+# shellcheck source=bin/fm-timeout-lib.sh
+. "$SCRIPT_DIR/fm-timeout-lib.sh"
 
 CMD=${1:-}
 case "$CMD" in
@@ -143,6 +154,36 @@ write_record() {  # <gen> <seq>
   mv -f "$tmp" "$REC"
 }
 
+# publish_busy_state: hand the state just written to the task's runtime backend,
+# so a firstmate worker is not the one session in that backend's UI showing no
+# state at all. Called only after the record has actually been replaced, which
+# keeps the record the source of truth and this strictly a side effect of it.
+#
+# Three properties it must hold, because it runs on a harness's own hook path:
+# it never fails the mutation (every failure mode returns 0), it never writes to
+# this script's stdout (arm's caller reads the minted gen from there), and it
+# never runs unbounded (fm_run_timed caps the whole side effect - resolving the
+# backend and the CLI call alike - at FM_BUSY_PUBLISH_BUDGET_SECS).
+#
+# The cheap gate is bin/fm-backend.sh's own compatibility contract: a task meta
+# with no `backend=` line IS a tmux task, and tmux has no state surface to
+# publish to, so the default path returns here without sourcing or forking
+# anything. WHICH of the explicitly recorded backends can actually publish is
+# the dispatcher's knowledge, not this script's - the no-op arm there is what
+# keeps every other backend unchanged.
+publish_busy_state() {  # <state> <event>
+  local meta="$STATE/$ID.meta"
+  [ -f "$meta" ] || return 0
+  grep -q '^backend=' "$meta" 2>/dev/null || return 0
+  # shellcheck disable=SC2016  # Expansion is deliberately deferred to the child shell.
+  fm_run_timed "${FM_BUSY_PUBLISH_BUDGET_SECS:-5}" bash -c '
+    . "$1/fm-backend.sh" || exit 0
+    fm_backend_publish_busy_state "$(fm_backend_of_meta "$2")" \
+      "$(fm_backend_target_of_meta "$2")" "$3" "$4"
+  ' fm-busy-publish "$SCRIPT_DIR" "$meta" "$1" "$2" >/dev/null 2>&1 || true
+  return 0
+}
+
 old_umask=$(umask)
 umask 077
 
@@ -155,6 +196,7 @@ if [ "$CMD" = arm ]; then
   } || { lock_release; umask "$old_umask"; echo "error: arm failed for $ID" >&2; exit 1; }
   lock_release
   umask "$old_umask"
+  publish_busy_state "$NEW_STATE" "$EVENT"
   printf '%s\n' "$GEN"
   exit 0
 fi
@@ -231,4 +273,5 @@ write_record "$GEN" $((OLD_SEQ + 1)) || {
 }
 lock_release
 umask "$old_umask"
+publish_busy_state "$NEW_STATE" "$EVENT"
 exit 0
