@@ -887,11 +887,17 @@ fm_backend_busy_state() {  # <backend> <target>
 # state surface implements it; every other backend is a silent no-op, so no
 # caller has to know which is which.
 #
-# One-way by design. The published state is never read back: firstmate keeps
-# classifying from the busy record owned by bin/fm-busy-lib.sh, and an
-# adapter's native READ (fm_backend_busy_state above) remains a separate,
-# record-subordinate signal. Nothing here may become an input to that
-# classification.
+# NOT one-way, and worth being precise about: an adapter that renders agent
+# state generally renders it from the same native field its own
+# fm_backend_busy_state reads, so what is published here is readable back
+# through that function. bin/fm-busy-lib.sh consults it on one path only - a
+# task with NO busy record at all, where a native `busy` verdict is trusted.
+# Two properties keep that honest rather than circular: the record outranks the
+# native read whenever a record exists, and the only value this can feed back is
+# one firstmate itself published, so the echo can restate firstmate's own last
+# state but never invent one. The busy record owned by bin/fm-busy-lib.sh
+# remains the source of truth, and nothing published here may be promoted above
+# it.
 #
 # Best-effort by contract: it always returns 0, because its only caller is
 # bin/fm-busy-event.sh's post-mutation side effect, which must never fail a

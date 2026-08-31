@@ -85,12 +85,17 @@ The mapping is the `hook_state` read in finding 6 inverted, plus the one distinc
 A state Firstmate cannot place publishes nothing at all rather than asserting one it cannot vouch for.
 `blocked` is not published here: waiting on a human lives in Firstmate's status-line vocabulary, not in the busy contract.
 
-Two properties are load-bearing.
+Three properties are load-bearing.
 The session is named explicitly with `--session`, never left to the `$THURBOX_SESSION` the CLI falls back to, because that writer also runs from Firstmate's own recovery paths and Firstmate's own pane is itself a thurbox session that exports its own uuid - the inherited default would stamp a worker's turn state onto the operator's session.
-And the whole report is best-effort and hard-bounded: a missing CLI, a gone session, a non-zero exit, or a slow call can never fail the busy-state write or hold a harness's turn hook open.
+The whole report is best-effort and hard-bounded: a missing CLI, a gone session, a non-zero exit, or a slow call can never fail the busy-state write or hold a harness's turn hook open.
+And a report the busy record has already moved past is dropped instead of sent, because the bounded CLI call deliberately runs outside the record's writer lock and two events racing on a turn boundary could otherwise land in the wrong order and leave the UI reading `working` against an idle record.
 
-The traffic is one-way.
-Nothing published here re-enters Firstmate's own classification, which continues to read the busy record; the native `hook_state` read of finding 6 remains a separate, record-subordinate signal.
+**Which workers this covers.** Only the harnesses whose wiring drives the busy-state contract report state here: `claude`, `opencode`, and `pi`/`pi-signed`.
+That is a property of the busy contract, not of this backend - `codex`, `grok`, `kimi`, `cursor`, and `muse` are not armed for it (`bin/fm-busy-lib.sh` owns each gate and the evidence it waits for), so a worker on one of those harnesses still renders as `uncovered`, and extending the contract to a further harness extends this reporting with it and needs no change here.
+
+**The traffic is not one-way**, and reading it as one-way would be a mistake.
+`session signal` writes the same `hook_state` that finding 6's native read reads back, and `bin/fm-busy-lib.sh` consults that read on exactly one path: a task with no busy record at all, where a native `working` verdict is trusted.
+Two properties keep that honest rather than circular: the busy record outranks the native read whenever a record exists, and the only value that can feed back is one Firstmate itself published - so the echo can restate Firstmate's own last reported state, never invent one.
 
 **Refusals.** A session whose `backend_type` is not `local-tmux` - a remote session from `session create --host`, whose window lives on another machine over SSH - is refused outright, because every pane primitive would silently address nothing. A session name that does not match the expected task's scoped title is refused, so a recycled UUID can never be sent to or deleted by mistake. A scoped name over thurbox's documented 64-character limit is refused loudly at spawn rather than silently truncated.
 

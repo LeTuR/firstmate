@@ -2412,7 +2412,20 @@ if [ "$KIND" != secondmate ]; then
   esac
   case "$HARNESS" in
     claude*|opencode*|pi|pi-signed)
-      BUSY_GEN=$("$FM_ROOT/bin/fm-busy-event.sh" arm "$STATE_REAL" "$ID") || {
+      # --publish-backend/--publish-target: this arm runs BEFORE the task's
+      # metadata is written below, so the writer has nothing on disk to resolve
+      # the runtime endpoint from and would skip publishing the launch turn -
+      # the one turn a fresh worker is certain to be running. Naming the
+      # endpoint here fixes only that gap; every later event reads the metadata.
+      # Passed only for a non-default backend with a resolved target, so the
+      # default path's arm command stays byte-identical and a spawn can never
+      # fail on the argument this side effect is carried by.
+      BUSY_ARM_PUBLISH=()
+      if [ "$BACKEND" != tmux ] && [ -n "${T:-}" ]; then
+        BUSY_ARM_PUBLISH=(--publish-backend "$BACKEND" --publish-target "$T")
+      fi
+      BUSY_GEN=$("$FM_ROOT/bin/fm-busy-event.sh" arm "$STATE_REAL" "$ID" \
+        "${BUSY_ARM_PUBLISH[@]+"${BUSY_ARM_PUBLISH[@]}"}") || {
         echo "error: failed to arm the busy-state contract for $ID" >&2
         exit 1
       }

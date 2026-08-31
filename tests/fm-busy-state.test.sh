@@ -47,6 +47,17 @@ cat > "$PUBLISH_BIN" <<'SH'
 #!/usr/bin/env bash
 set -u
 [ -z "${FM_PUBLISH_NOISE:-}" ] || { echo "stub chatter on stdout"; echo "stub chatter on stderr" >&2; }
+# FM_PUBLISH_BLOCK makes this call hang until the named file is removed, so a
+# test can hold one publication open and drive a second one against it. The cap
+# keeps a broken test from wedging the suite rather than failing it.
+if [ -n "${FM_PUBLISH_BLOCK:-}" ]; then
+  [ -z "${FM_PUBLISH_STARTED:-}" ] || : > "$FM_PUBLISH_STARTED"
+  waited=0
+  while [ -e "$FM_PUBLISH_BLOCK" ] && [ "$waited" -lt 200 ]; do
+    sleep 0.05
+    waited=$((waited + 1))
+  done
+fi
 sess=''; state=''
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -71,7 +82,7 @@ PUBLISH_UUID=aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee
 
 reset_publish_log() {
   : > "$PUBLISH_LOG"
-  unset FM_PUBLISH_EXIT FM_PUBLISH_NOISE 2>/dev/null || true
+  unset FM_PUBLISH_EXIT FM_PUBLISH_NOISE FM_PUBLISH_BLOCK FM_PUBLISH_STARTED 2>/dev/null || true
 }
 
 # publish_meta <state-dir> <id> [backend]: the task metadata the writer reads to
@@ -626,6 +637,126 @@ test_publish_never_pollutes_the_writer_stdout() {
   pass "publishing never writes to the writer's own stdout"
 }
 
+test_publish_reports_the_launch_turn_before_any_metadata_exists() {
+  local state gen
+  state=$(new_state_dir publish-launch)
+  reset_publish_log
+  # fm-spawn arms BEFORE it writes the task metadata, so this is the real
+  # fresh-spawn shape: no metadata on disk at all.
+  [ ! -e "$state/t1.meta" ] || fail "fixture wrote metadata it should not have"
+  gen=$("$EV" arm "$state" t1 --publish-backend thurbox --publish-target "$PUBLISH_UUID:%20") \
+    || fail "arm with an explicit endpoint failed"
+  [ "$(published)" = "$PUBLISH_UUID working" ] \
+    || fail "the launch turn was not published, got '$(published)'"
+  # And the metadata gate is what every later event still uses: the same arm
+  # with no named endpoint has nothing to resolve and publishes nothing.
+  reset_publish_log
+  "$EV" arm "$state" t2 >/dev/null || fail "plain arm failed"
+  [ -z "$(published)" ] || fail "a pre-metadata arm published '$(published)' with no endpoint named"
+  pass "a fresh spawn publishes its launch turn only when it names the endpoint"
+}
+
+test_publish_endpoint_is_accepted_on_arm_only() {
+  local state gen
+  state=$(new_state_dir publish-argument-gate)
+  publish_meta "$state" t1 thurbox
+  gen=$("$EV" arm "$state" t1) || fail "arm failed"
+  reset_publish_log
+  # Every other caller runs once the metadata exists, so letting it name an
+  # endpoint would let it publish somewhere the task's own record does not.
+  if "$EV" apply "$state" t1 busy --gen "$gen" --source claude-hook --event user-prompt-submit \
+      --publish-backend thurbox --publish-target "$PUBLISH_UUID:%20" 2>/dev/null; then
+    fail "apply accepted an explicit publish endpoint"
+  fi
+  if "$EV" retire "$state" t1 --gen "$gen" \
+      --publish-backend thurbox --publish-target "$PUBLISH_UUID:%20" 2>/dev/null; then
+    fail "retire accepted an explicit publish endpoint"
+  fi
+  [ -z "$(published)" ] || fail "a refused invocation published '$(published)'"
+  # A malformed pair is refused rather than silently ignored.
+  if "$EV" arm "$state" t2 --publish-backend 'thurbox;rm -rf /' --publish-target x 2>/dev/null; then
+    fail "arm accepted a malformed publish backend"
+  fi
+  if "$EV" arm "$state" t3 --publish-backend thurbox --publish-target '' 2>/dev/null; then
+    fail "arm accepted an empty publish target"
+  fi
+  pass "an explicit publish endpoint is accepted on arm only, and validated"
+}
+
+test_publish_budget_cannot_be_disabled_by_a_zero_override() {
+  local state gen started block start elapsed
+  state=$(new_state_dir publish-budget)
+  publish_meta "$state" t1 thurbox
+  gen=$("$EV" arm "$state" t1) || fail "arm failed"
+  reset_publish_log
+  block="$state/block"
+  started="$state/started"
+  : > "$block"
+  # `timeout 0` and the perl fallback's `alarm 0` both DISABLE the deadline
+  # (bin/fm-timeout-lib.sh's own contract), so an unsanitized 0 would leave this
+  # hanging on the stub for its full 10s cap instead of being bounded.
+  start=$(date +%s)
+  FM_PUBLISH_BLOCK="$block" FM_PUBLISH_STARTED="$started" \
+    FM_BUSY_PUBLISH_BUDGET_SECS=0 \
+    "$EV" apply "$state" t1 idle --gen "$gen" --source claude-hook --event stop \
+    || fail "a bounded publish failed the busy-state write"
+  elapsed=$(( $(date +%s) - start ))
+  rm -f "$block"
+  [ -e "$started" ] || fail "the stub never ran, so nothing was bounded"
+  [ "$elapsed" -lt 8 ] \
+    || fail "a zero budget disabled the bound: the write took ${elapsed}s"
+  [ "$(fm_busy_classify tmux w1 claude t1 "$state")" = "idle claude-hook" ] \
+    || fail "the record did not survive a bounded publish"
+  # A non-numeric override degrades to the default bound the same way.
+  reset_publish_log
+  : > "$block"
+  start=$(date +%s)
+  FM_PUBLISH_BLOCK="$block" FM_BUSY_PUBLISH_BUDGET_SECS=not-a-number \
+    "$EV" apply "$state" t1 busy --gen "$gen" --source claude-hook --event user-prompt-submit \
+    || fail "a garbage budget failed the busy-state write"
+  elapsed=$(( $(date +%s) - start ))
+  rm -f "$block"
+  [ "$elapsed" -lt 8 ] || fail "a garbage budget disabled the bound: ${elapsed}s"
+  pass "a zero or malformed publish budget falls back to a real bound"
+}
+
+test_publish_is_dropped_rather_than_landing_out_of_order() {
+  local state gen block started waited
+  state=$(new_state_dir publish-ordering)
+  publish_meta "$state" t1 thurbox
+  gen=$("$EV" arm "$state" t1) || fail "arm failed"
+  reset_publish_log
+  block="$state/block"
+  started="$state/started"
+  : > "$block"
+  # Hold one publication open inside the backend CLI, then drive a second event
+  # against it. The second must still write its record - the mutation can never
+  # depend on this side effect - and must not queue behind the slow call on a
+  # turn hook, so it publishes nothing at all.
+  FM_PUBLISH_BLOCK="$block" FM_PUBLISH_STARTED="$started" \
+    "$EV" apply "$state" t1 idle --gen "$gen" --source claude-hook --event stop &
+  local slow_pid=$!
+  waited=0
+  while [ ! -e "$started" ] && [ "$waited" -lt 100 ]; do
+    sleep 0.05
+    waited=$((waited + 1))
+  done
+  [ -e "$started" ] || { rm -f "$block"; wait "$slow_pid" 2>/dev/null; fail "the held publication never started"; }
+  "$EV" apply "$state" t1 busy --gen "$gen" --source claude-hook --event user-prompt-submit \
+    || { rm -f "$block"; wait "$slow_pid" 2>/dev/null; fail "a contended publish failed the busy-state write"; }
+  [ -z "$(published)" ] \
+    || { rm -f "$block"; wait "$slow_pid" 2>/dev/null; fail "a contended publication landed anyway: '$(published)'"; }
+  rm -f "$block"
+  wait "$slow_pid" 2>/dev/null || fail "the held publication failed its write"
+  # Exactly one publication went out, and the record - not the UI - is what the
+  # second event advanced.
+  [ "$(published)" = "$PUBLISH_UUID done" ] \
+    || fail "expected the single held publication, got '$(published)'"
+  [ "$(fm_busy_classify tmux w1 claude t1 "$state")" = "busy claude-hook" ] \
+    || fail "the contended event did not advance the record"
+  pass "a publication contending with one in flight is dropped, never reordered"
+}
+
 test_arm_seeds_busy_spawn
 test_apply_advances_seq_and_source
 test_apply_current_gen_reset
@@ -655,5 +786,9 @@ test_publish_never_reports_a_state_firstmate_cannot_place
 test_publish_never_follows_a_refused_or_retired_event
 test_publish_failure_never_fails_the_mutation
 test_publish_never_pollutes_the_writer_stdout
+test_publish_reports_the_launch_turn_before_any_metadata_exists
+test_publish_endpoint_is_accepted_on_arm_only
+test_publish_budget_cannot_be_disabled_by_a_zero_override
+test_publish_is_dropped_rather_than_landing_out_of_order
 
 echo "all fm-busy-state tests passed"
