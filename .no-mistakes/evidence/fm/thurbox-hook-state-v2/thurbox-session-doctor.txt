@@ -1,0 +1,42 @@
+=== thurbox's own hook-wiring diagnostic, run against two firstmate workers ===
+
+$ thurbox-cli session doctor 5ce3deff-... (worker reported by this change)
+  [1]:
+    - agent: shell
+      checks[5]{check,detail,level}:
+        extension,the built-in hooks extension is active,ok
+        coverage,"thurbox ships no status hooks for agent 'shell', but signals are arriving — something in the pane is calling `thurbox-cli session signal`, so this session reports what that caller chooses to report",warn
+        cli,hook commands resolve `thurbox-cli` to /home/magicletur/.local/bin/thurbox-cli,ok
+        last-signal,"done, 29s ago",ok
+        pane,foreign-agent (claude),ok
+      hook_corroboration: foreign-agent
+      hook_coverage: none
+      hook_reported: true
+      hook_state: done
+      hook_state_age_secs: 29
+      hook_state_contradicted: false
+      hook_states_reportable: []
+      session_id: 5ce3deff-9896-4051-96c4-a63721064e9b
+      session_name: fm-firstmate-9db06da6-thurbox-hook-state
+      verdict: warn
+
+$ thurbox-cli session doctor 55abdef4-... (firstmate worker with no reporting)
+  [1]:
+    - agent: shell
+      checks[5]{check,detail,level}:
+        extension,the built-in hooks extension is active,ok
+        coverage,"thurbox ships no status hooks for agent 'shell' — set `hook_schema` in agents.toml if it speaks a built-in's hook format, or have your driver call `thurbox-cli session signal --state <s>` (identity comes from the injected $THURBOX_SESSION, so it needs no arguments)",fail
+        cli,hook commands resolve `thurbox-cli` to /home/magicletur/.local/bin/thurbox-cli,ok
+        last-signal,nothing has ever signalled for this session,warn
+        pane,"no live pane for this session, so its state cannot be checked",warn
+      hook_corroboration: unknown
+      hook_coverage: none
+      hook_reported: false
+      hook_state: null
+      hook_state_age_secs: null
+      hook_state_contradicted: false
+      hook_states_reportable: []
+      session_id: 55abdef4-9c44-4cf7-bfdd-840fdcca5693
+      session_name: fm-firstmate-9db06da6-thurbox-pipelines-pane
+      verdict: fail
+  hook wiring is broken for: fm-firstmate-9db06da6-thurbox-pipelines-pane — see the FAIL checks above

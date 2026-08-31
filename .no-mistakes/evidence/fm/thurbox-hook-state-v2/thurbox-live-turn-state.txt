@@ -1,0 +1,59 @@
+=== thurbox ===
+{"data_dir":"/home/magicletur/.local/share/thurbox","schema_version":40,"tmux_socket":"thurbox","version":"2.10.2"}
+
+=== BEFORE: the crew as the operator sees it ===
+    NAME                                          AGENT   STATE       BACKEND     BRANCH  CWD                                                          ID
+    Firstmate                                     claude  done (47s)  local-tmux  -       /home/magicletur/repositories/firstmate                      48375c4e-96d3-46a1-a3f8-3be623dced7e
+    fm-firstmate-9db06da6-thurbox-hook-state      shell   done (51m)  local-tmux  -       /home/magicletur/repositories/firstmate                      5ce3deff-9896-4051-96c4-a63721064e9b
+    fm-firstmate-9db06da6-thurbox-pipelines-pane  shell   uncovered   local-tmux  -       /home/magicletur/repositories/firstmate/projects/thurbox-ui  55abdef4-9c44-4cf7-bfdd-840fdcca5693
+
+the worker under test (5ce3deff-9896-4051-96c4-a63721064e9b):
+    state=done       hook_state=done     hook_coverage=none  agent=shell
+
+=== 1. fresh spawn: fm-spawn arms BEFORE it writes task metadata ===
+  (state dir holds no task metadata at all: 0 files)
+
+$ fm-busy-event.sh arm <state> live1 --publish-backend thurbox --publish-target 5ce3deff-9896-4051-96c4-a63721064e9b:%45
+  minted gen on stdout (uncontaminated): 'g1788183731.2957410.8562'
+  thurbox now renders: state=working    hook_state=working  hook_coverage=none  agent=shell
+
+=== 2. the turn lifecycle, event by event ===
+
+$ /home/magicletur/.no-mistakes/worktrees/9db06da6b4b9/01M1BYK4NRF98K3TSVW56TAMVH/bin/fm-busy-event.sh apply /tmp/fm-live-state.H2FAGr live1 idle --gen g1788183731.2957410.8562 --source claude-hook --event stop
+  thurbox now renders: state=done       hook_state=done     hook_coverage=none  agent=shell
+
+$ /home/magicletur/.no-mistakes/worktrees/9db06da6b4b9/01M1BYK4NRF98K3TSVW56TAMVH/bin/fm-busy-event.sh apply /tmp/fm-live-state.H2FAGr live1 busy --gen g1788183731.2957410.8562 --source claude-hook --event user-prompt-submit
+  thurbox now renders: state=working    hook_state=working  hook_coverage=none  agent=shell
+
+$ /home/magicletur/.no-mistakes/worktrees/9db06da6b4b9/01M1BYK4NRF98K3TSVW56TAMVH/bin/fm-busy-event.sh apply /tmp/fm-live-state.H2FAGr live1 idle --gen g1788183731.2957410.8562 --source opencode-hook --event session-idle
+  thurbox now renders: state=done       hook_state=done     hook_coverage=none  agent=shell
+
+$ /home/magicletur/.no-mistakes/worktrees/9db06da6b4b9/01M1BYK4NRF98K3TSVW56TAMVH/bin/fm-busy-event.sh apply /tmp/fm-live-state.H2FAGr live1 busy --gen g1788183731.2957410.8562 --source claude-hook --event user-prompt-submit
+  thurbox now renders: state=working    hook_state=working  hook_coverage=none  agent=shell
+
+$ /home/magicletur/.no-mistakes/worktrees/9db06da6b4b9/01M1BYK4NRF98K3TSVW56TAMVH/bin/fm-busy-event.sh apply /tmp/fm-live-state.H2FAGr live1 idle --gen g1788183731.2957410.8562 --source fm-interrupt --event interrupt
+  thurbox now renders: state=idle       hook_state=idle     hook_coverage=none  agent=shell
+
+$ /home/magicletur/.no-mistakes/worktrees/9db06da6b4b9/01M1BYK4NRF98K3TSVW56TAMVH/bin/fm-busy-event.sh apply /tmp/fm-live-state.H2FAGr live1 unknown --gen g1788183731.2957410.8562 --source claude-hook --event session-end
+  thurbox now renders: state=idle       hook_state=idle     hook_coverage=none  agent=shell
+
+=== 3. fm-control exit: the record goes, the endpoint stays alive ===
+
+$ /home/magicletur/.no-mistakes/worktrees/9db06da6b4b9/01M1BYK4NRF98K3TSVW56TAMVH/bin/fm-busy-event.sh apply /tmp/fm-live-state.H2FAGr live1 busy --gen g1788183731.2957410.8562 --source claude-hook --event user-prompt-submit
+  thurbox now renders: state=working    hook_state=working  hook_coverage=none  agent=shell
+
+$ /home/magicletur/.no-mistakes/worktrees/9db06da6b4b9/01M1BYK4NRF98K3TSVW56TAMVH/bin/fm-busy-event.sh retire /tmp/fm-live-state.H2FAGr live1 --current-gen
+  thurbox now renders: state=idle       hook_state=idle     hook_coverage=none  agent=shell
+
+=== 4. a default-backend (tmux) task publishes nothing ===
+  four events on a task with no backend= line
+  thurbox still renders: state=idle       hook_state=idle     hook_coverage=none  agent=shell
+
+=== 5. restore the worker to the state it was found in ===
+  restored: state=done       hook_state=done     hook_coverage=none  agent=shell
+
+=== AFTER: the crew, and every other session untouched ===
+    NAME                                          AGENT   STATE       BACKEND     BRANCH  CWD                                                          ID
+    Firstmate                                     claude  done (51s)  local-tmux  -       /home/magicletur/repositories/firstmate                      48375c4e-96d3-46a1-a3f8-3be623dced7e
+    fm-firstmate-9db06da6-thurbox-hook-state      shell   done (0s)   local-tmux  -       /home/magicletur/repositories/firstmate                      5ce3deff-9896-4051-96c4-a63721064e9b
+    fm-firstmate-9db06da6-thurbox-pipelines-pane  shell   uncovered   local-tmux  -       /home/magicletur/repositories/firstmate/projects/thurbox-ui  55abdef4-9c44-4cf7-bfdd-840fdcca5693
