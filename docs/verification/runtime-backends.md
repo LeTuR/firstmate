@@ -1644,11 +1644,23 @@ and the session then reported hook state rather than a process guess:
 turns, where it previously answered `unknown`, and `watch --session` pushed the
 matching `changed working` transition.
 
+That transcript predates claude's own launch template gaining its own
+`--settings '{"feedbackDrafts":"off"}'` flag.
+Because `claude --settings` is single-valued, typing both would now silently
+drop one, so `fm_backend_thurbox_merge_claude_settings` folds thurbox's hook
+file and firstmate's own object into one merged `--settings` value instead
+(`bin/fm-spawn.sh`'s `__CLAUDESETTINGS__` slot) - the typed launch carries one
+`--settings` occurrence with both payloads, not two.
+`tests/fm-backend-thurbox.test.sh` pins the merged value against a fake
+`thurbox-cli`; this section's live transcript needs a fresh
+`fm-spawn.sh --backend thurbox` run against a real claude launch to re-confirm
+the merged flag end to end.
+
 Per-harness resolution against the installed `agents.toml`:
 
 | Harness | `agent launch-args` | Effect |
 | --- | --- | --- |
-| claude | `--settings <hooks>.json` | Passed through; native state works |
+| claude | `--settings <hooks>.json` | Merged with firstmate's own `--settings` object into one flag; native state works |
 | codex, opencode, pi | registered, empty `args` | Nothing to pass; thurbox installs their hooks by writing the agent's own config, and coverage stays as thurbox reports it |
 | grok, kimi, cursor, muse | not in `agents.toml` | No native state; one notice at spawn, and the pane read is used |
 

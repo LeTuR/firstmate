@@ -130,6 +130,10 @@ Firstmate's spawn contract is uniform across every backend: create a shell endpo
 Only the `args` are taken: the `env` the verb also reports names this thurbox instance, and the pane already carries it, since thurbox injects `THURBOX_SESSION` into every pane it creates and that is the identity `session signal` resolves.
 `--session` is deliberately not passed, because it would additionally pin the agent's conversation id and make thurbox a second owner of resume alongside Firstmate's own relaunch path.
 
+Claude is the one harness whose own template already carries a `--settings` flag, and claude's `--settings` is single-valued (`claude --help`: `<file-or-json>`), so typing thurbox's `--settings <hooks-file>` as a second occurrence would silently drop one of the two.
+`fm_backend_thurbox_merge_claude_settings` folds thurbox's hook payload and firstmate's own inline JSON into one object instead, with firstmate's own keys winning on any collision, and `bin/fm-spawn.sh` types the merged value through its own `__CLAUDESETTINGS__` slot rather than appending thurbox's `--settings` pair into `__THURBOXARGS__`.
+When that value cannot be read or parsed, the spawn falls back to firstmate's own settings alone and warns that the session reports no native agent state.
+
 Verified 2026-09-02 on a real `fm-spawn.sh --backend thurbox` task: the session reports `state_source: hook`, `busy_state` answers `busy` during a turn and `idle` between them, and the session's transitions appear in `watch`.
 
 Two outcomes are not the same and only one is worth a notice.
@@ -225,6 +229,8 @@ The row's own `backend_id` against the socket `version` reports is what is left.
 `fm_backend_thurbox_agent_state` reports `missing` only on a `gone` verdict and `unreadable` otherwise.
 That is the sharper edge: only `dead` and `missing` license recovery, and recovery starts a replacement agent, so answering `missing` for a session whose agent is still running would invite a second agent into one task.
 
+`bin/fm-teardown.sh` gates the same way before it erases a task's durable records: it refuses and retains every record unless `fm_backend_thurbox_endpoint_confirmed_gone` returns a positive `gone` verdict, so a close that was refused, skipped, or failed - or whose confirmation machinery is unavailable - never loses the task's identity.
+
 ### Parked sessions
 
 A parked session (`session stop`) keeps its row, checkout and conversation but loses its pane, so no send, key, or capture can land on it.
@@ -232,6 +238,7 @@ From 2.11.1 the session row says so directly: `stopped` is on both `session get`
 
 `fm_backend_thurbox_target_ready` reads that flag, so a parked session is never a ready write target.
 `fm_backend_thurbox_agent_state` reads it off the inventory row it already holds and reports `dead` rather than `missing`, so recovery relaunches into the session instead of treating the endpoint as gone.
+A parked `dead` endpoint has no pane for that relaunch to type into, unlike every other backend's `dead`, so `bin/fm-spawn.sh`'s relaunch path calls `fm_backend_thurbox_relaunch_prepare` first, which runs `session start` - idempotent on an already-running session - to restore the pane before the replacement harness is delivered.
 
 On 2.11.0 neither read could answer, which is what the version floor exists to refuse.
 
@@ -250,7 +257,6 @@ A steer beginning with a dash is the case this protects; Firstmate's own export 
 
 - **No secondmate spawns.** `--secondmate` is refused on this backend, matching cmux. The path is not verified.
 - **`session exec` does not carry the session's environment.** It sets the cwd and host but inherits the *caller's* environment, so `--env` values from `session create` are absent and the caller's own `THURBOX_SESSION` leaks into the child. A `thurbox-cli session signal` run through `session exec` would report state for the caller's session rather than the target's. The adapter does not use `session exec`; the pane's own environment is correct, and a pane created for a task carries that task's `THURBOX_SESSION`, not its parent's.
-- **Hook coverage requires thurbox to launch the agent.** See "Agent state and hook coverage" above. Native busy state is unavailable for Firstmate-launched agents until the hook payload can be applied to an externally launched one.
 - **A harness thurbox does not register reports no native state.** Firstmate passes through whatever `agent launch-args` reports, so an agent absent from `agents.toml` has nothing to pass and its sessions fall back to the pane read. Adding an entry for that agent in `agents.toml` is all it takes; Firstmate needs no change.
 
 ## Verification

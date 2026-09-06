@@ -774,9 +774,9 @@ fi
 # liveness, so a finished-but-pane-closed crew never reaches here. Down here there
 # is no run to consult, so only positive evidence that the target is gone may
 # read as death - a backend that failed to answer is unknown, never death, for
-# both classifier-backed backends (tmux and herdr) - and every death-class
-# verdict reports unknown rather than trusting a possibly-stale status log as
-# the current state.
+# every classifier-backed backend (tmux, herdr, and thurbox) - and every
+# death-class verdict reports unknown rather than trusting a possibly-stale
+# status log as the current state.
 [ -n "$BACKEND_TARGET" ] || emit unknown none "no backend target recorded"
 if ! pane_readable "$BACKEND_TARGET"; then
   # A failed probe is not itself evidence the pane is gone: the herdr CLI can
