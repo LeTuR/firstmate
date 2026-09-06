@@ -262,6 +262,29 @@ fm_backend_thurbox_agent_launch_args() {  # <agent> -> one arg per line
   printf '%s' "$raw" | jq -r '.args[]? // empty' 2>/dev/null
 }
 
+# fm_backend_thurbox_merge_claude_settings: fold thurbox's own claude
+# `--settings` value (a file path, per agents.toml, or occasionally inline
+# JSON) together with firstmate's own inline `--settings` JSON into ONE
+# object, printed compact on stdout. claude's `--settings` is single-valued
+# (`claude --help`: "<file-or-json>"), so typing two occurrences silently
+# drops one - verified empirically, and it is thurbox's hook payload that
+# loses because firstmate's copy comes later in the template. Firstmate's own
+# keys win on any collision, so a managed feedbackDrafts control can never be
+# overridden back on by thurbox's payload. Returns 1 (nothing printed) when
+# the thurbox side cannot be read or parsed, so the caller can fall back to
+# firstmate's own settings alone rather than typing a broken --settings value.
+fm_backend_thurbox_merge_claude_settings() {  # <thurbox-value> <firstmate-json>
+  local thurbox_value=$1 firstmate_json=$2 thurbox_json
+  case "$thurbox_value" in
+    '{'*) thurbox_json=$thurbox_value ;;
+    *)
+      [ -r "$thurbox_value" ] || return 1
+      thurbox_json=$(cat "$thurbox_value") || return 1
+      ;;
+  esac
+  jq -c -n --argjson a "$thurbox_json" --argjson b "$firstmate_json" '$a * $b' 2>/dev/null
+}
+
 # --- target handling ---------------------------------------------------------
 
 # fm_backend_thurbox_parse_target: split "thurbox:<uuid>" and export the uuid

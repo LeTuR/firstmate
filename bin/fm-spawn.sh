@@ -1508,12 +1508,13 @@ launch_template() {
     # agent never queues or submits a bug-report draft on the captain's behalf even
     # under a managed Claude settings policy: CLAUDE_CODE_SEND_FEEDBACK=0 is read
     # directly and is not subject to managed-settings precedence, while --settings
-    # '{"feedbackDrafts":"off"}' sets the documented settings key (Claude Code
-    # changelog 2.1.247) that a managed policy CAN override back on. Either control
-    # alone disables the feature; keep both so a managed override of one still
-    # leaves the other in force. Both are per-launch, scoped to this invocation only,
-    # and never touch the captain's global ~/.claude/settings.json.
-    # The same inline --settings JSON also carries the attribution policy
+    # __CLAUDESETTINGS__ (default '{"feedbackDrafts":"off",...}') sets the
+    # documented settings key (Claude Code changelog 2.1.247) that a managed
+    # policy CAN override back on. Either control alone disables the feature;
+    # keep both so a managed override of one still leaves the other in force.
+    # Both are per-launch, scoped to this invocation only, and never touch the
+    # captain's global ~/.claude/settings.json.
+    # The same --settings JSON also carries the attribution policy
     # ("attribution": {"commit": "", "pr": "", "sessionUrl": false}), which
     # suppresses Claude Code's Co-Authored-By trailer, Claude-Session link, and
     # generated-with line in commits and PR bodies. The captain sets that
@@ -1521,10 +1522,15 @@ launch_template() {
     # sources are not guaranteed to load that scope, so a worker would
     # otherwise run with attribution back on; carrying it per launch keeps the
     # policy in force regardless of which settings scopes end up loaded.
+    # __CLAUDESETTINGS__ is its own placeholder rather than a literal because
+    # claude's --settings is single-valued ("<file-or-json>", not variadic): on
+    # thurbox, firstmate's own object is merged with thurbox's hook payload into
+    # one value below rather than typed as a second, silently-dropped
+    # --settings flag.
     # __CLAUDEPERMFLAG__ is the permission flag config/claude-permission-mode
     # selects (header above): --dangerously-skip-permissions by default, or
     # --permission-mode auto for a captain who refuses bypass mode.
-    claude) printf '%s' 'CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false CLAUDE_CODE_SEND_FEEDBACK=0 claude __THURBOXARGS____CLAUDEPERMFLAG__ --settings '\''{"feedbackDrafts":"off","attribution":{"commit":"","pr":"","sessionUrl":false}}'\'' __MODELFLAG____EFFORTFLAG__"$(__OPINPUT__ encode launch-brief < __BRIEF__)"' ;;
+    claude) printf '%s' 'CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false CLAUDE_CODE_SEND_FEEDBACK=0 claude __THURBOXARGS____CLAUDEPERMFLAG__ --settings __CLAUDESETTINGS__ __MODELFLAG____EFFORTFLAG__"$(__OPINPUT__ encode launch-brief < __BRIEF__)"' ;;
     codex)
       if [ "$kind" = secondmate ]; then
         printf '%s' 'codex __THURBOXARGS____MODELFLAG____EFFORTFLAG__--dangerously-bypass-approvals-and-sandbox "$(__OPINPUT__ encode launch-brief < __BRIEF__)"'
@@ -3914,6 +3920,7 @@ EFFORTFLAG=$(effort_flag_for_harness "$HARNESS" "$EFFORT" "$MODEL") || exit 1
 # coverage"). The adapter returns nothing for a harness thurbox does not
 # register, which is a normal outcome and never a spawn failure.
 THURBOXARGS=""
+CLAUDESETTINGS='{"feedbackDrafts":"off","attribution":{"commit":"","pr":"","sessionUrl":false}}'
 if [ "$BACKEND" = thurbox ]; then
   # EMPTY args and a FAILED lookup are different answers and only one is worth
   # a notice. thurbox delivers some agents' hooks through the launch args
@@ -3922,17 +3929,41 @@ if [ "$BACKEND" = thurbox ]; then
   # nothing to append still reports state normally. Only an agent thurbox does
   # not know at all loses native state, and that is what the notice names.
   if _tbx_out=$(fm_backend_thurbox_agent_launch_args "$HARNESS" 2>/dev/null); then
+    _tbx_want_settings_value=0
+    _tbx_settings_value=""
     while IFS= read -r _tbx_arg; do
       [ -n "$_tbx_arg" ] || continue
+      # claude's own template already carries a --settings flag
+      # (__CLAUDESETTINGS__), and claude's --settings is single-valued, so
+      # thurbox's --settings/<value> pair is pulled out of the appended args
+      # here and merged into that one flag below rather than typed as a
+      # second, silently-dropped occurrence.
+      if [ "$HARNESS" = claude ] && [ "$_tbx_want_settings_value" = 1 ]; then
+        _tbx_settings_value=$_tbx_arg
+        _tbx_want_settings_value=0
+        continue
+      fi
+      if [ "$HARNESS" = claude ] && [ "$_tbx_arg" = "--settings" ]; then
+        _tbx_want_settings_value=1
+        continue
+      fi
       THURBOXARGS="$THURBOXARGS$(shell_quote "$_tbx_arg") "
     done <<EOF
 $_tbx_out
 EOF
+    if [ -n "$_tbx_settings_value" ]; then
+      if _tbx_merged=$(fm_backend_thurbox_merge_claude_settings "$_tbx_settings_value" "$CLAUDESETTINGS"); then
+        CLAUDESETTINGS=$_tbx_merged
+      else
+        echo "notice: thurbox's claude settings at '$_tbx_settings_value' could not be read, so this task's session reports no native agent state; firstmate falls back to reading the pane" >&2
+      fi
+    fi
   else
     echo "notice: thurbox has no agents.toml entry for harness '$HARNESS', so this task's session reports no native agent state; firstmate falls back to reading the pane" >&2
   fi
 fi
 LAUNCH=${LAUNCH//__THURBOXARGS__/$THURBOXARGS}
+LAUNCH=${LAUNCH//__CLAUDESETTINGS__/$(shell_quote "$CLAUDESETTINGS")}
 LAUNCH=${LAUNCH//__MODELFLAG__/$MODELFLAG}
 LAUNCH=${LAUNCH//__EFFORTFLAG__/$EFFORTFLAG}
 LAUNCH=${LAUNCH//__CLAUDEPERMFLAG__/$CLAUDE_PERM_FLAG}

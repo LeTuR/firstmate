@@ -916,6 +916,12 @@ pass "the thurbox arm is evaluated before tmux, so a thurbox pane is never misre
 make_spawn_thurbox_fakebin() {  # <dir> -> echoes fakebin dir
   local dir=$1 fb
   fb=$(make_spawn_fakebin "$dir/fake" gh-axi gh)
+  # A real file on disk, exactly like the real agents.toml pointing at
+  # thurbox's own hooks config: the fix under test reads and merges this
+  # file's content, so a placeholder string is not enough here.
+  mkdir -p "$dir/hooks"
+  printf '{"hooks":{"Stop":[{"matcher":"","hooks":[{"type":"command","command":"true"}]}]}}' \
+    > "$dir/hooks/claude.json"
   cat > "$fb/thurbox-cli" <<'SH'
 #!/usr/bin/env bash
 set -u
@@ -927,7 +933,7 @@ case "${1:-}:${2:-}" in
     # that carries no entry for every firstmate harness.
     case "${3:-}" in
       claude)
-        printf '{"agent":"claude","command":"claude","args":["--settings","/hooks/claude.json"],"env":{},"hooks_enabled":true,"hook_coverage":"full"}\n' ;;
+        printf '{"agent":"claude","command":"claude","args":["--settings","__HOOKS_FILE__"],"env":{},"hooks_enabled":true,"hook_coverage":"full"}\n' ;;
       opencode)
         # Registered with FULL coverage and no args: thurbox installs this
         # agent's hooks out of band, so nothing is appended and state still works.
@@ -965,6 +971,9 @@ case "${1:-}:${2:-}" in
 esac
 exit 0
 SH
+  # The heredoc above is single-quoted (no expansion), so the fixture's actual
+  # path is spliced in afterwards rather than interpolated at write time.
+  sed -i "s|__HOOKS_FILE__|$dir/hooks/claude.json|" "$fb/thurbox-cli"
   chmod +x "$fb/thurbox-cli"
   printf '%s\n' "$fb"
 }
@@ -1006,19 +1015,60 @@ thurbox_typed_lines() {
   tr '\037' ' ' < "$FM_THURBOX_LOG" | grep '^session send ' || true
 }
 
+# claude's own --settings is single-valued ("<file-or-json>", not variadic:
+# `claude --help`), and firstmate's own launch template already carries one
+# (feedbackDrafts off). Typing thurbox's hook-config --settings as a SECOND,
+# separate flag would silently drop one of the two - verified empirically,
+# with thurbox's payload losing because firstmate's copy comes later - so
+# native state reporting would be dead for every firstmate-spawned claude
+# session despite this whole adapter existing to make it work. The property
+# under test is that exactly one --settings reaches the pane and its value
+# carries BOTH sides, proven by feeding the captured value through a real jq,
+# the same way claude itself would parse it.
+settings_count_of() {  # <typed-command-text>
+  printf '%s' "$1" | grep -o -- '--settings' | wc -l | tr -d ' '
+}
+settings_value_of() {  # <typed-command-text> (exactly one --settings assumed)
+  printf '%s\n' "$1" | grep -- '--settings' | sed -E "s/.*--settings '([^']*)'.*/\1/"
+}
+
 spawn_case_thurbox hookargs
 out=$(run_thurbox_spawn "$SPAWN_HOME" "$SPAWN_WT" "$SPAWN_FB" "$SPAWN_ID" "$SPAWN_PROJ" claude --mode no-mistakes --yolo off)
 status=$?
 [ "$status" -eq 0 ] || { printf '%s\n' "--- spawn output ---" "$out" >&2; fail "thurbox spawn should succeed"; }
 typed=$(thurbox_typed_lines)
 assert_contains "$typed" 'claude' "the harness launch must be typed into the pane"
-# Each argument is shell-quoted individually, because a hooks path may contain
-# spaces and the launch is typed into a shell rather than exec'd.
-assert_contains "$typed" "'--settings' '/hooks/claude.json'" \
-  "the agent's own hook args must reach the typed launch, or thurbox reports no state for the session"
-assert_contains "$typed" "claude '--settings'" \
-  "the hook args must sit directly after the binary, not after the brief positional"
-pass "a thurbox spawn types the agent's hook args, so the session reports state and appears in watch"
+[ "$(settings_count_of "$typed")" = 1 ] \
+  || fail "claude's --settings is single-valued; exactly one must reach the typed launch (got: $typed)"
+settings_value=$(settings_value_of "$typed")
+printf '%s' "$settings_value" | jq -e '.feedbackDrafts == "off"' >/dev/null \
+  || fail "the merged --settings must still carry firstmate's own feedbackDrafts control (got: $settings_value)"
+printf '%s' "$settings_value" | jq -e '.hooks.Stop[0].hooks[0].command == "true"' >/dev/null \
+  || fail "the merged --settings must still carry thurbox's own hook wiring, or the session reports no state (got: $settings_value)"
+assert_contains "$typed" "claude --dangerously-skip-permissions --settings" \
+  "the merged settings must sit directly after the binary, not after the brief positional"
+pass "a thurbox claude spawn merges thurbox's hook payload and firstmate's own settings into one --settings argument"
+
+# A thurbox settings source that cannot be read (missing/unreadable file) must
+# not be silently dropped into a broken merge or a duplicated flag - firstmate
+# falls back to its own --settings alone and says so, exactly like the
+# existing "no agents.toml entry" notice for an unregistered harness.
+spawn_case_thurbox brokenhookfile
+rm -f "$(dirname "$SPAWN_HOME")/hooks/claude.json"
+out=$(run_thurbox_spawn "$SPAWN_HOME" "$SPAWN_WT" "$SPAWN_FB" "$SPAWN_ID" "$SPAWN_PROJ" claude --mode no-mistakes --yolo off)
+status=$?
+[ "$status" -eq 0 ] || { printf '%s\n' "--- spawn output ---" "$out" >&2; fail "a spawn whose thurbox settings source cannot be read must still succeed"; }
+typed=$(thurbox_typed_lines)
+[ "$(settings_count_of "$typed")" = 1 ] \
+  || fail "an unreadable thurbox settings source must still leave exactly one --settings (got: $typed)"
+settings_value=$(settings_value_of "$typed")
+printf '%s' "$settings_value" | jq -e '.feedbackDrafts == "off"' >/dev/null \
+  || fail "firstmate's own --settings must survive a merge failure (got: $settings_value)"
+printf '%s' "$settings_value" | jq -e 'has("hooks") | not' >/dev/null \
+  || fail "an unreadable thurbox settings source must not appear to have merged anyway (got: $settings_value)"
+assert_contains "$out" 'could not be read' \
+  "a merge failure must be reported, not silently dropped"
+pass "an unreadable thurbox settings source falls back to firstmate's own --settings alone, with a notice"
 
 # A harness thurbox has no agents.toml entry for must still spawn. The lookup
 # fails by design there, and a failed lookup is not a spawn failure - it only
