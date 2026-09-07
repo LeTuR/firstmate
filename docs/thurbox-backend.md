@@ -231,6 +231,8 @@ That is the sharper edge: only `dead` and `missing` license recovery, and recove
 
 `bin/fm-teardown.sh` gates the same way before it erases a task's durable records: it refuses and retains every record unless `fm_backend_thurbox_endpoint_confirmed_gone` returns a positive `gone` verdict, so a close that was refused, skipped, or failed - or whose confirmation machinery is unavailable - never loses the task's identity.
 
+Forced secondmate cleanup applies the same gate to a thurbox child: it kills the child's endpoint, then retains that child's durable identity records unless `fm_backend_thurbox_endpoint_confirmed_gone` returns `gone`, rather than falling into the discard-the-close-result fallback that backends without a provable absence use.
+
 ### Parked sessions
 
 A parked session (`session stop`) keeps its row, checkout and conversation but loses its pane, so no send, key, or capture can land on it.
