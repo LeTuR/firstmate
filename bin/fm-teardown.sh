@@ -2972,6 +2972,24 @@ cleanup_firstmate_home_children() {
           echo "error: herdr pane $child_t for child $child_id is not confirmed gone; retaining that child's durable identity records and stopping forced cleanup" >&2
           return 1
         fi
+      elif [ "$child_backend" = thurbox ]; then
+        # thurbox endpoint absence is PROVABLE, so a forced child cleanup must
+        # prove it rather than discard the close result the way the fallback
+        # arm below does for backends that cannot. A soft delete from outside
+        # removes the row while the agent keeps running, and `delete --force`
+        # then cannot resolve that row at all, so an unproven close here would
+        # return the child's worktree and erase its durable identity with the
+        # agent still live. Same gate the ordinary teardown path applies.
+        fm_backend_source thurbox || true
+        if ! declare -F fm_backend_thurbox_endpoint_confirmed_gone >/dev/null 2>&1; then
+          echo "error: thurbox endpoint confirmation is unavailable for child $child_id; retaining that child's durable identity records and stopping forced cleanup" >&2
+          return 1
+        fi
+        fm_backend_kill "$child_backend" "$child_t" "$(meta_value "$child_meta" zellij_tab_id)" "fm-$child_id" 2>/dev/null || true
+        if ! fm_backend_thurbox_endpoint_confirmed_gone "$child_t"; then
+          echo "error: thurbox session $child_t for child $child_id is not confirmed gone after its close was refused, skipped, or failed; retaining that child's durable identity records and stopping forced cleanup - rerun teardown once the endpoint can be reaped" >&2
+          return 1
+        fi
       elif [ "$child_backend" = zellij ]; then
         # Zellij titles are scoped by the owning home tag, so forced secondmate
         # cleanup must verify child tabs as that child home, not the parent.

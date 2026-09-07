@@ -2362,6 +2362,69 @@ SH
   pass "forced secondmate teardown preflights every Herdr child before cleanup mutation"
 }
 
+configure_secondmate_with_thurbox_child() {  # <case-dir>
+  local case_dir=$1 home="$1/secondmate-home"
+  mkdir -p "$home/state" "$home/data" "$home/config" "$home/projects"
+  printf '%s\n' task-x1 > "$home/.fm-secondmate-home"
+  printf '%s\n' "home=$home" >> "$case_dir/state/task-x1.meta"
+  fm_write_meta "$home/state/child-thurbox.meta" \
+    "window=thurbox:11111111-2222-3333-4444-555555555555" \
+    "endpoint_task_id=child-thurbox" \
+    "worktree=$case_dir/wt" \
+    "project=$case_dir/project" \
+    "kind=ship" \
+    "mode=local-only" \
+    "backend=thurbox" \
+    "thurbox_session_id=11111111-2222-3333-4444-555555555555"
+  : > "$home/state/child-thurbox.status"
+  : > "$home/state/child-thurbox.turn-ended"
+  # Both close paths decline and the session stays in the live inventory, which
+  # is the state an outside soft delete leaves: the row is unreachable by
+  # `delete --force` while its agent keeps running.
+  cat > "$case_dir/fakebin/thurbox-cli" <<'SH'
+#!/usr/bin/env bash
+set -u
+case "${1:-} ${2:-}" in
+  "version ") printf '{"version":"2.18.2","tmux_socket":"thurbox"}\n' ;;
+  "session list")
+    printf '[{"id":"11111111-2222-3333-4444-555555555555","name":"child","stopped":false}]\n' ;;
+  "session delete") printf '{"error":"Session not found"}\n'; exit 1 ;;
+  "session reap")   printf '{"error":"Deleted session not found"}\n'; exit 1 ;;
+  *) printf '{}\n' ;;
+esac
+exit 0
+SH
+  chmod +x "$case_dir/fakebin/thurbox-cli"
+}
+
+# A forced secondmate cleanup must prove a thurbox child's endpoint is gone
+# before it returns that child's worktree and deletes its durable identity.
+# thurbox is one of the backends whose absence IS provable, so discarding the
+# close result here would retire a task whose agent may still be running.
+test_forced_secondmate_thurbox_child_retains_records_when_not_confirmed_gone() {
+  local case_dir home rc
+  case_dir=$(make_case thurbox-child-unconfirmed)
+  write_meta "$case_dir" local-only secondmate
+  configure_secondmate_with_thurbox_child "$case_dir"
+  home="$case_dir/secondmate-home"
+  cat > "$case_dir/fakebin/treehouse" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+  chmod +x "$case_dir/fakebin/treehouse"
+  rc=0
+  run_teardown "$case_dir" --force > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+  [ "$rc" -ne 0 ] \
+    || fail "thurbox-child-unconfirmed: forced cleanup continued past a child whose endpoint was never confirmed gone"
+  [ -e "$home/state/child-thurbox.meta" ] \
+    || fail "thurbox-child-unconfirmed: the child's durable identity was erased while its agent may still run"
+  [ -e "$home/state/child-thurbox.status" ] \
+    || fail "thurbox-child-unconfirmed: the child's status record was erased"
+  [ -d "$home" ] \
+    || fail "thurbox-child-unconfirmed: the secondmate home was removed"
+  pass "forced secondmate cleanup retains a thurbox child's records when its endpoint is not confirmed gone"
+}
+
 configure_secondmate_with_tmux_children() {  # <case-dir>
   local case_dir=$1 home="$1/secondmate-home" child child_wt
   mkdir -p "$home/state" "$home/data" "$home/config" "$home/projects"
@@ -3737,6 +3800,7 @@ test_herdr_flat_teardown_refuses_orphaning_records_then_retry_completes
 test_herdr_flat_teardown_refuses_records_on_unparseable_presence
 test_herdr_flat_teardown_preflight_refuses_before_changes
 test_forced_secondmate_herdr_child_preflight_refuses_before_changes
+test_forced_secondmate_thurbox_child_retains_records_when_not_confirmed_gone
 test_forced_secondmate_teardown_holds_descendant_lifecycle_locks
 test_forced_secondmate_herdr_child_retains_records_when_close_unconfirmed
 test_forced_teardown_retains_nested_secondmate_home_when_grandchild_close_unconfirmed
