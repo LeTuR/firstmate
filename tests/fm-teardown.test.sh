@@ -1996,6 +1996,17 @@ exit 0
 SH
   chmod +x "$case_dir/fakebin/thurbox-cli"
 
+  # A retained record is only a safe recovery target if the task directory it
+  # points at still exists. Record every `treehouse return` invocation so we
+  # can prove the worktree was never handed back to the pool once the close
+  # could not be confirmed - not merely that the meta/status files survived.
+  cat > "$case_dir/fakebin/treehouse" <<SH2
+#!/usr/bin/env bash
+echo "\$@" >> "$case_dir/treehouse-calls.log"
+exit 0
+SH2
+  chmod +x "$case_dir/fakebin/treehouse"
+
   set +e
   run_teardown "$case_dir" --force > "$case_dir/stdout" 2> "$case_dir/stderr"
   rc=$?
@@ -2005,6 +2016,8 @@ SH
   [ -e "$case_dir/state/task-x1.status" ] || fail "thurbox-close-unconfirmed: refusal erased the task status record"
   assert_grep "is not confirmed gone" "$case_dir/stderr" \
     "thurbox-close-unconfirmed: the refusal was not explained visibly"
+  assert_absent "$case_dir/treehouse-calls.log" \
+    "thurbox-close-unconfirmed: the worktree was returned to the treehouse pool before the thurbox close was confirmed gone, so the retained record no longer has a task directory to recover"
   pass "thurbox teardown retains every durable record when the close fails and the session is not confirmed gone"
 }
 
