@@ -1645,16 +1645,59 @@ turns, where it previously answered `unknown`, and `watch --session` pushed the
 matching `changed working` transition.
 
 That transcript predates claude's own launch template gaining its own
-`--settings '{"feedbackDrafts":"off"}'` flag.
-Because `claude --settings` is single-valued, typing both would now silently
-drop one, so `fm_backend_thurbox_merge_claude_settings` folds thurbox's hook
-file and firstmate's own object into one merged `--settings` value instead
-(`bin/fm-spawn.sh`'s `__CLAUDESETTINGS__` slot) - the typed launch carries one
-`--settings` occurrence with both payloads, not two.
+`--settings '{"feedbackDrafts":"off"}'` flag, which the rebase then combined
+with thurbox's. The textual merge was correct line by line and produced a
+semantic collision: `claude --settings` is single-valued, so typing both
+flags silently drops one, and the transcript above no longer holds - a live
+proof silently expired. `fm_backend_thurbox_merge_claude_settings` now folds
+thurbox's hook file and firstmate's own object into one merged `--settings`
+value instead (`bin/fm-spawn.sh`'s `__CLAUDESETTINGS__` slot) - the typed
+launch carries one `--settings` occurrence with both payloads, not two.
 `tests/fm-backend-thurbox.test.sh` pins the merged value against a fake
-`thurbox-cli`; this section's live transcript needs a fresh
-`fm-spawn.sh --backend thurbox` run against a real claude launch to re-confirm
-the merged flag end to end.
+`thurbox-cli`.
+
+Verified 2026-09-06 against the installed claude 2.1.263, as a controlled
+launch-argument A/B rather than an end-to-end `fm-spawn.sh --backend thurbox`
+run: it isolates the single variable (a second `--settings` occurrence) by
+launching claude interactively - not headless `-p` - with a real completed
+turn in each arm, minutes apart, in the same directory.
+
+Arm A, the duplicated argv order the template produced before the merge fix:
+
+```text
+claude --settings <config>/thurbox/hooks/claude.json --dangerously-skip-permissions --settings '{"feedbackDrafts":"off"}'
+```
+
+```text
+{"state":"running","state_source":"process","hook_reported":false,"hook_state":null}
+```
+
+`watch` reported no transitions at all. The turn genuinely ran - the pane
+showed the prompt, the reply, and a completed turn - so the null result is
+the absence of a hook signal, not the absence of a turn.
+
+Arm B, a single `--settings`:
+
+```text
+claude --settings <config>/thurbox/hooks/claude.json --dangerously-skip-permissions
+```
+
+```text
+{"state":"idle","state_source":"hook","hook_reported":true,"hook_state":"idle"}
+# after a turn:
+{"state":"done","state_source":"hook","hook_reported":true}
+```
+
+`watch` reported `changed state=working` then `changed state=done`.
+
+The two arms support one conclusion and no more: `claude --settings` is
+single-valued, a second occurrence discards the first, and with the
+duplicated flags thurbox's hook payload never loaded - the merge into a
+single `--settings` argument is a behavioural fix, not only a robustness
+improvement. A fresh live `fm-spawn.sh --backend thurbox` run (via the
+`live-harness-optin` guard) against a real claude launch remains the way to
+re-confirm the whole spawn path end to end; this A/B only isolates the
+mechanism.
 
 Per-harness resolution against the installed `agents.toml`:
 
