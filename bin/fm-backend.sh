@@ -657,10 +657,6 @@ fm_backend_source() {  # <name>
       ;;
     thurbox)
       if [ -z "${_FM_BACKEND_THURBOX_SOURCED:-}" ]; then
-        # bin/backends/thurbox.sh reuses fm_backend_tmux_classify_process_name
-        # for its foreground-identity reads (the shared owner of the
-        # agent/shell/other vocabulary), so the tmux adapter loads first.
-        fm_backend_source tmux || return 1
         # shellcheck source=/dev/null
         . "$FM_BACKEND_LIB_DIR/backends/thurbox.sh" || return 1
         _FM_BACKEND_THURBOX_SOURCED=1

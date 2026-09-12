@@ -93,6 +93,8 @@ FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 
 # shellcheck source=bin/fm-backend-hometag-lib.sh
 . "$FM_BACKEND_THURBOX_ROOT/bin/fm-backend-hometag-lib.sh"
+# shellcheck source=bin/fm-agent-process-lib.sh
+. "$FM_BACKEND_THURBOX_ROOT/bin/fm-agent-process-lib.sh"
 
 fm_backend_thurbox_bin() {
   command -v thurbox-cli >/dev/null 2>&1 || return 1
@@ -610,8 +612,8 @@ fm_backend_thurbox_composer_caps() {
 }
 
 # fm_backend_thurbox_classify_foreground: map thurbox's two foreground fields
-# onto the shared agent/shell/other classifier (bin/backends/tmux.sh, the single
-# owner of that vocabulary). foreground_command is a full command LINE, so its
+# onto the shared agent/shell/other classifier (bin/fm-agent-process-lib.sh, the
+# single owner of that vocabulary). foreground_command is a full command LINE, so its
 # leading token is the executable as invoked - that is the `path` the classifier
 # expects, and passing the whole line would make `${path##*/}` read
 # "bash -i" and match nothing. foreground_process is the process name and fills
@@ -622,7 +624,7 @@ fm_backend_thurbox_classify_foreground() {  # <foreground_command> <foreground_p
   head=${cmd%% *}
   [ -n "$head" ] || head=$proc
   [ -n "$head" ] || return 1
-  fm_backend_tmux_classify_process_name "$head" "$proc"
+  fm_agent_process_classify_name "$head" "$proc"
 }
 
 # fm_backend_thurbox_composer_identity: the native agent-identity probe backing
